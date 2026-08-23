@@ -578,6 +578,7 @@ def get_recent_orders():
 # ============================================================
 
 def get_all_users():
+    """Return users for the admin table without exposing passwords."""
 
     connection = get_connection()
     cursor = connection.cursor()
@@ -599,6 +600,90 @@ def get_all_users():
     connection.close()
 
     return users
+
+
+# ============================================================
+# PASSWORD RESET - VERIFY USER
+# ============================================================\===========
+
+def verify_password_reset_user(email, phone):
+    """Verify a user for the Forgot Password flow using email + phone."""
+
+    connection = get_connection()
+    cursor = connection.cursor()
+
+    cursor.execute("""
+        SELECT id
+        FROM users
+        WHERE LOWER(email) = ?
+        AND phone = ?
+        AND role = 'user'
+    """, (
+        email.strip().lower(),
+        phone.strip()
+    ))
+
+    user = cursor.fetchone()
+
+    connection.close()
+
+    return user
+
+
+# ============================================================
+# PASSWORD RESET - UPDATE PASSWORD
+# ============================================================
+
+def reset_user_password(user_id, new_password):
+    """Set a new password for a verified user."""
+
+    connection = get_connection()
+    cursor = connection.cursor()
+
+    cursor.execute("""
+        UPDATE users
+        SET password = ?
+        WHERE id = ?
+        AND role = 'user'
+    """, (
+        new_password,
+        user_id
+    ))
+
+    changed = cursor.rowcount > 0
+
+    connection.commit()
+    connection.close()
+
+    return changed
+
+
+# ============================================================
+# ADMIN - RESET USER PASSWORD
+# ============================================================
+
+def admin_reset_user_password(user_id, new_password):
+    """Allow an admin to set a new password for a normal user."""
+
+    connection = get_connection()
+    cursor = connection.cursor()
+
+    cursor.execute("""
+        UPDATE users
+        SET password = ?
+        WHERE id = ?
+        AND role = 'user'
+    """, (
+        new_password,
+        user_id
+    ))
+
+    changed = cursor.rowcount > 0
+
+    connection.commit()
+    connection.close()
+
+    return changed
 
 
 # ============================================================

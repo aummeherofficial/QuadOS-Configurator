@@ -28,7 +28,10 @@ from database import (
     get_user_order_count,
     create_order,
     get_user_orders,
-    get_all_orders_with_users
+    get_all_orders_with_users,
+    verify_password_reset_user,
+    reset_user_password,
+    admin_reset_user_password
 )
 
 from config import (
@@ -583,7 +586,22 @@ def validate_registration(name, email, password, confirm_password, phone, addres
 
 
 # ============================================================
-# LOGIN / REGISTER
+# PASSWORD RESET VALIDATION
+# ============================================================
+
+def validate_new_password(password, confirm_password):
+    valid, message = validate_password(password)
+    if not valid:
+        return False, message
+
+    if password != confirm_password:
+        return False, "Passwords do not match."
+
+    return True, ""
+
+
+# ============================================================
+# LOGIN / REGISTER / FORGOT PASSWORD
 # ============================================================
 
 if not st.session_state.logged_in:
@@ -591,14 +609,9 @@ if not st.session_state.logged_in:
     st.title("QuadOS")
     st.subheader("Secure Login")
 
-    # ========================================================
-    # CREATE TABS
-    # ========================================================
-
-    login_tab, register_tab = st.tabs(
-        ["Login", "Create Account"]
+    login_tab, register_tab, forgot_tab = st.tabs(
+        ["Login", "Create Account", "Forgot Password"]
     )
-
 
     # ========================================================
     # LOGIN
@@ -606,9 +619,7 @@ if not st.session_state.logged_in:
 
     with login_tab:
 
-        st.write(
-            "Use your registered email and password to continue."
-        )
+        st.write("Use your registered email and password to continue.")
 
         email = st.text_input(
             "Email",
@@ -632,64 +643,24 @@ if not st.session_state.logged_in:
             use_container_width=True
         ):
 
-            # ------------------------------------------------
-            # CLEAN INPUT
-            # ------------------------------------------------
-
             email = email.strip()
             password = password.strip()
 
-            # ------------------------------------------------
-            # EMPTY EMAIL
-            # ------------------------------------------------
-
             if email == "":
-
-                st.warning(
-                    "Please enter your email."
-                )
-
-            # ------------------------------------------------
-            # EMPTY PASSWORD
-            # ------------------------------------------------
+                st.warning("Please enter your email.")
 
             elif password == "":
-
-                st.warning(
-                    "Please enter your password."
-                )
-
-            # ------------------------------------------------
-            # LOGIN
-            # ------------------------------------------------
+                st.warning("Please enter your password.")
 
             else:
-
-                user = login_user(
-                    email,
-                    password
-                )
+                user = login_user(email, password)
 
                 if user:
-
-
-
                     st.session_state.logged_in = True
-
                     st.session_state.user = user
-
                     st.rerun()
-
                 else:
-
-                    # -------------------------------
-                    # LOGIN FAILED
-                    # -------------------------------
-
-                    st.error(
-                        "Invalid email or password."
-                    )
-
+                    st.error("Invalid email or password.")
 
     # ========================================================
     # CREATE ACCOUNT
@@ -697,42 +668,22 @@ if not st.session_state.logged_in:
 
     with register_tab:
 
-        st.write(
-            "Create a new QuadOS account."
-        )
+        st.write("Create a new QuadOS account.")
 
-        name = st.text_input(
-            "Full Name",
-            key="register_name"
-        )
-
-        email = st.text_input(
-            "Email",
-            key="register_email"
-        )
-
+        name = st.text_input("Full Name", key="register_name")
+        email = st.text_input("Email", key="register_email")
         password = st.text_input(
             "Password",
             type="password",
             key="register_password"
         )
-
         confirm_password = st.text_input(
             "Confirm Password",
             type="password",
             key="register_confirm_password"
         )
-
-        phone = st.text_input(
-            "Phone",
-            key="register_phone"
-        )
-
-        address = st.text_area(
-            "Address",
-            key="register_address"
-        )
-
+        phone = st.text_input("Phone", key="register_phone")
+        address = st.text_area("Address", key="register_address")
 
         if st.button(
             "Create Account",
@@ -740,143 +691,99 @@ if not st.session_state.logged_in:
             use_container_width=True
         ):
 
-            # ------------------------------------------------
-            # CLEAN INPUT
-            # ------------------------------------------------
+            valid, message = validate_registration(
+                name, email, password, confirm_password, phone, address
+            )
 
-            name = name.strip()
-            email = email.strip()
-            phone = phone.strip()
-            address = address.strip()
-
-
-            # ------------------------------------------------
-            # REQUIRED FIELDS
-            # ------------------------------------------------
-
-            if name == "":
-
-                st.warning(
-                    "Please enter your full name."
-                )
-
-            elif email == "":
-
-                st.warning(
-                    "Please enter your email."
-                )
-
-            elif password == "":
-
-                st.warning(
-                    "Please enter a password."
-                )
-
-            elif confirm_password == "":
-
-                st.warning(
-                    "Please confirm your password."
-                )
-
-
-            # ------------------------------------------------
-            # PASSWORD MATCH
-            # ------------------------------------------------
-
-            elif password != confirm_password:
-
-                st.error(
-                    "Passwords do not match."
-                )
-
-
-            # ------------------------------------------------
-            # PASSWORD LENGTH
-            # ------------------------------------------------
-
-            elif len(password) < 8:
-
-                st.error(
-                    "Password must contain at least 8 characters."
-                )
-
-
-            # ------------------------------------------------
-            # UPPERCASE
-            # ------------------------------------------------
-
-            elif not any(
-                character.isupper()
-                for character in password
-            ):
-
-                st.error(
-                    "Password must contain at least one uppercase letter."
-                )
-
-
-            # ------------------------------------------------
-            # LOWERCASE
-            # ------------------------------------------------
-
-            elif not any(
-                character.islower()
-                for character in password
-            ):
-
-                st.error(
-                    "Password must contain at least one lowercase letter."
-                )
-
-
-            # ------------------------------------------------
-            # NUMBER
-            # ------------------------------------------------
-
-            elif not any(
-                character.isdigit()
-                for character in password
-            ):
-
-                st.error(
-                    "Password must contain at least one number."
-                )
-
-
-            # ------------------------------------------------
-            # CREATE ACCOUNT
-            # ------------------------------------------------
-
+            if not valid:
+                st.error(message)
             else:
-
                 success = create_user(
-                    name,
-                    email,
+                    name.strip(),
+                    email.strip(),
                     password,
-                    phone,
-                    address
+                    phone.strip(),
+                    address.strip()
                 )
 
                 if success:
-
-                    st.success(
-                        "Account created successfully."
-                    )
-
-                    st.info(
-                        "You can now login with your account."
-                    )
-
+                    st.success("Account created successfully.")
+                    st.info("You can now login with your account.")
                 else:
+                    st.error("This email is already registered.")
 
-                    st.error(
-                        "This email is already registered."
+    # ========================================================
+    # FORGOT PASSWORD
+    # ========================================================
+
+    with forgot_tab:
+
+        st.write("Reset your password using your registered email and phone number.")
+        st.caption("For security, QuadOS does not display existing passwords.")
+
+        reset_email = st.text_input(
+            "Registered Email",
+            key="reset_email"
+        )
+
+        reset_phone = st.text_input(
+            "Registered Phone Number",
+            key="reset_phone"
+        )
+
+        new_password = st.text_input(
+            "New Password",
+            type="password",
+            key="reset_new_password"
+        )
+
+        confirm_new_password = st.text_input(
+            "Confirm New Password",
+            type="password",
+            key="reset_confirm_password"
+        )
+
+        if st.button(
+            "Reset Password",
+            key="reset_password_button",
+            use_container_width=True
+        ):
+
+            reset_email = reset_email.strip()
+            reset_phone = reset_phone.strip()
+
+            if not reset_email:
+                st.warning("Please enter your registered email.")
+
+            elif not reset_phone:
+                st.warning("Please enter your registered phone number.")
+
+            else:
+                verified_user = verify_password_reset_user(
+                    reset_email,
+                    reset_phone
+                )
+
+                if not verified_user:
+                    st.error("Email and phone number do not match a registered user.")
+                else:
+                    valid, message = validate_new_password(
+                        new_password,
+                        confirm_new_password
                     )
 
+                    if not valid:
+                        st.error(message)
+                    else:
+                        changed = reset_user_password(
+                            verified_user[0],
+                            new_password
+                        )
 
-    # ========================================================
-    # STOP EXECUTION UNTIL LOGIN
-    # ========================================================
+                        if changed:
+                            st.success("Password reset successfully. You can now login.")
+                        else:
+                            st.error("Password could not be reset. Please try again.")
 
     st.stop()
 
@@ -1121,64 +1028,113 @@ elif page == "All Users":
 
     st.title("All Users")
 
-    st.write(
-        "View all registered QuadOS users."
-    )
-
-    st.write("")
+    st.write("View all registered QuadOS users in a table.")
 
     users = get_all_users()
 
     if users:
 
-        for user in users:
+        user_rows = []
 
+        for user in users:
             user_id = user[0]
             name = user[1]
             email = user[2]
-            phone = user[3]
-            address = user[4]
-            role = user[5]
+            phone = user[3] or "-"
+            address = user[4] or "-"
+            role = user[5] or "user"
 
-            with st.container(border=True):
+            user_rows.append({
+                "User ID": user_id,
+                "Name": name,
+                "Email": email,
+                "Phone": phone,
+                "Address": address,
+                "Role": role,
+                "Password": "Protected"
+            })
 
-                col1, col2, col3 = st.columns(3)
+        users_df = pd.DataFrame(user_rows)
 
-                with col1:
+        st.dataframe(
+            users_df,
+            use_container_width=True,
+            hide_index=True,
+            height=450
+        )
 
-                    st.write(
-                        f"**User ID:** {user_id}"
+        st.caption(
+            f"Total users: {len(users_df)} | Passwords are protected and are not displayed."
+        )
+
+        st.divider()
+        st.subheader("Reset User Password")
+
+        normal_users = [
+            user for user in users
+            if (user[5] or "user").lower() == "user"
+        ]
+
+        if normal_users:
+
+            user_options = {
+                f"{user[1]} — {user[2]}": user[0]
+                for user in normal_users
+            }
+
+            selected_label = st.selectbox(
+                "Select User",
+                list(user_options.keys()),
+                key="admin_reset_user_select"
+            )
+
+            selected_user_id = user_options[selected_label]
+
+            admin_new_password = st.text_input(
+                "New Password",
+                type="password",
+                key="admin_new_password"
+            )
+
+            admin_confirm_password = st.text_input(
+                "Confirm New Password",
+                type="password",
+                key="admin_confirm_password"
+            )
+
+            if st.button(
+                "Reset Selected User Password",
+                key="admin_reset_password_button",
+                type="primary",
+                use_container_width=True
+            ):
+
+                valid, message = validate_new_password(
+                    admin_new_password,
+                    admin_confirm_password
+                )
+
+                if not valid:
+                    st.error(message)
+                else:
+                    changed = admin_reset_user_password(
+                        selected_user_id,
+                        admin_new_password
                     )
 
-                    st.write(
-                        f"**Name:** {name}"
-                    )
-
-                with col2:
-
-                    st.write(
-                        f"**Email:** {email}"
-                    )
-
-                    st.write(
-                        f"**Phone:** {phone}"
-                    )
-
-                with col3:
-
-                    st.write(
-                        f"**Address:** {address}"
-                    )
-
-                    st.write(
-                        f"**Role:** {role}"
-                    )
+                    if changed:
+                        st.success(
+                            "User password reset successfully."
+                        )
+                    else:
+                        st.error(
+                            "Password reset failed."
+                        )
+        else:
+            st.info("There are no normal users available for password reset.")
 
     else:
-
-        st.info(
-            "No users found."
-        )
+        st.info("No users found.")
 
 
 # ============================================================
