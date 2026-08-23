@@ -3,6 +3,7 @@ import base64
 from pathlib import Path
 from datetime import datetime
 import pandas as pd
+import re
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 
@@ -382,25 +383,98 @@ def get_cart_total():
 
 
 # ============================================================
+# AUTHENTICATION VALIDATION
+# ============================================================
+
+EMAIL_PATTERN = re.compile(
+    r"^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$"
+)
+
+
+def normalize_email(email):
+    return email.strip().lower()
+
+
+def validate_email(email):
+    email = normalize_email(email)
+    if not email:
+        return False, "Email is required."
+    if len(email) > 254:
+        return False, "Email is too long."
+    if not EMAIL_PATTERN.fullmatch(email):
+        return False, "Please enter a valid email address."
+    return True, ""
+
+
+def validate_password(password):
+    if not password:
+        return False, "Password is required."
+    if len(password) < 8:
+        return False, "Password must contain at least 8 characters."
+    if len(password) > 128:
+        return False, "Password must not exceed 128 characters."
+    if not re.search(r"[A-Z]", password):
+        return False, "Password must contain at least one uppercase letter."
+    if not re.search(r"[a-z]", password):
+        return False, "Password must contain at least one lowercase letter."
+    if not re.search(r"\d", password):
+        return False, "Password must contain at least one number."
+    return True, ""
+
+
+def validate_registration(name, email, password, confirm_password, phone, address):
+    name = " ".join(name.strip().split())
+    if not name:
+        return False, "Full name is required."
+    if len(name) < 2 or len(name) > 80:
+        return False, "Full name must be between 2 and 80 characters."
+    if not re.fullmatch(r"[A-Za-z][A-Za-z .'-]*", name):
+        return False, "Full name can contain letters, spaces, apostrophes and hyphens only."
+
+    valid_email, email_message = validate_email(email)
+    if not valid_email:
+        return False, email_message
+
+    valid_password, password_message = validate_password(password)
+    if not valid_password:
+        return False, password_message
+
+    if password != confirm_password:
+        return False, "Passwords do not match."
+
+    phone = phone.strip()
+    if phone and not re.fullmatch(r"[0-9+()\- ]{7,20}", phone):
+        return False, "Please enter a valid phone number."
+
+    if len(address.strip()) > 250:
+        return False, "Address must not exceed 250 characters."
+
+    return True, ""
+
+
+# ============================================================
 # LOGIN / REGISTER
 # ============================================================
 
 if not st.session_state.logged_in:
 
     st.title("QuadOS")
+    st.subheader("Secure Login")
 
-    st.subheader("Login to QuadOS")
-
+    # CREATE THE TABS FIRST
     login_tab, register_tab = st.tabs(
         ["Login", "Create Account"]
     )
-
 
     # ========================================================
     # LOGIN
     # ========================================================
 
     with login_tab:
+
+        st.write(
+            "Use your registered email and password to continue."
+        )
 
         email = st.text_input(
             "Email",
@@ -415,39 +489,60 @@ if not st.session_state.logged_in:
 
         if st.button(
             "Login",
+            key="login_button",
             use_container_width=True
         ):
 
-            user = login_user(
-                email,
-                password
-            )
+            # Do NOT use strict email validation here.
+            # This allows existing QuadOS users to continue
+            # using the identifier stored in the database.
 
-            if user:
+            email = email.strip().lower()
 
-                st.session_state.logged_in = True
+            if email == "":
+                st.warning(
+                    "Please enter your email."
+                )
 
-                st.session_state.user = user
-
-                st.rerun()
+            elif password == "":
+                st.warning(
+                    "Please enter your password."
+                )
 
             else:
 
-                st.error(
-                    "Invalid email or password."
+                user = login_user(
+                    email,
+                    password
                 )
+
+                if user:
+
+                    st.session_state.logged_in = True
+                    st.session_state.user = user
+
+                    st.rerun()
+
+                else:
+
+                    st.error(
+                        "Invalid email or password."
+                    )
 
 
     # ========================================================
-    # REGISTER
+    # CREATE ACCOUNT
     # ========================================================
 
     with register_tab:
 
-        st.subheader("Create User Account")
+        st.write(
+            "Create a new QuadOS user account."
+        )
 
         name = st.text_input(
-            "Full Name"
+            "Full Name",
+            key="register_name"
         )
 
         email = st.text_input(
@@ -461,28 +556,119 @@ if not st.session_state.logged_in:
             key="register_password"
         )
 
+        confirm_password = st.text_input(
+            "Confirm Password",
+            type="password",
+            key="register_confirm_password"
+        )
+
         phone = st.text_input(
-            "Phone"
+            "Phone",
+            key="register_phone"
         )
 
         address = st.text_area(
-            "Address"
+            "Address",
+            key="register_address"
         )
 
         if st.button(
             "Create Account",
+            key="create_account_button",
             use_container_width=True
         ):
 
-            if (
-                name == ""
-                or email == ""
-                or password == ""
+            name = name.strip()
+            email = email.strip().lower()
+            phone = phone.strip()
+            address = address.strip()
+
+            # -----------------------------
+            # REQUIRED FIELDS
+            # -----------------------------
+
+            if name == "":
+                st.warning(
+                    "Please enter your full name."
+                )
+
+            elif email == "":
+                st.warning(
+                    "Please enter your email."
+                )
+
+            elif password == "":
+                st.warning(
+                    "Please enter a password."
+                )
+
+            elif confirm_password == "":
+                st.warning(
+                    "Please confirm your password."
+                )
+
+            # -----------------------------
+            # PASSWORD MATCH
+            # -----------------------------
+
+            elif password != confirm_password:
+
+                st.error(
+                    "Passwords do not match."
+                )
+
+            # -----------------------------
+            # PASSWORD LENGTH
+            # -----------------------------
+
+            elif len(password) < 8:
+
+                st.error(
+                    "Password must contain at least 8 characters."
+                )
+
+            # -----------------------------
+            # PASSWORD UPPERCASE
+            # -----------------------------
+
+            elif not any(
+                character.isupper()
+                for character in password
             ):
 
-                st.warning(
-                    "Please fill all required fields."
+                st.error(
+                    "Password must contain at least one uppercase letter."
                 )
+
+            # -----------------------------
+            # PASSWORD LOWERCASE
+            # -----------------------------
+
+            elif not any(
+                character.islower()
+                for character in password
+            ):
+
+                st.error(
+                    "Password must contain at least one lowercase letter."
+                )
+
+            # -----------------------------
+            # PASSWORD NUMBER
+            # -----------------------------
+
+            elif not any(
+                character.isdigit()
+                for character in password
+            ):
+
+                st.error(
+                    "Password must contain at least one number."
+                )
+
+            # -----------------------------
+            # CREATE USER
+            # -----------------------------
 
             else:
 
@@ -507,9 +693,7 @@ if not st.session_state.logged_in:
                         "This email is already registered."
                     )
 
-
     st.stop()
-
 
 # ============================================================
 # GET CURRENT USER
