@@ -1,3 +1,4 @@
+
 import streamlit as st
 import base64
 from pathlib import Path
@@ -98,6 +99,14 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+
+
+from query_ui import (
+    render_user_help_queries,
+    render_admin_queries
+)
+
 
 
 # ============================================================
@@ -1024,15 +1033,15 @@ with st.sidebar:
 
         page = st.radio(
             "Navigation",
-            [
-                "Admin Dashboard",
-                "All Users",
-                "All Orders",
-                "Manage Orders",
-                "Analytics",
-                "Queries",
-                "About"
-            ]
+          [
+            "Admin Dashboard",
+            "All Users",
+            "All Orders",
+            "Manage Orders",
+            "Analytics",
+            "Queries",
+            "About"
+          ],
         )
 
 
@@ -1050,12 +1059,13 @@ with st.sidebar:
 
         page = st.radio(
             "Navigation",
-            [
+           [
                 "Home",
                 "PC Configurator",
                 "Mobile Configurator",
                 "My Orders",
                 "My Profile",
+                "Help & Queries",
                 "About"
             ],
             key="user_navigation"
@@ -3770,78 +3780,23 @@ elif page == "My Profile":
     )
 
 
+
 # ============================================================
-# ADMIN QUERIES
+# ADMIN QUERIES / SUPPORT CHAT
 # ============================================================
 
 elif page == "Queries":
 
-    st.title("User Queries")
-    st.write("Questions and help requests submitted by QuadOS users.")
+    render_admin_queries(current_user)
 
-    queries = get_all_queries()
 
-    if queries:
-        query_rows = []
-        for query in queries:
-            query_rows.append({
-                "Query ID": query[0],
-                "User ID": query[1] if query[1] is not None else "Guest",
-                "Name": query[2],
-                "Email": query[3],
-                "Subject": query[4],
-                "Question": query[5],
-                "Submitted At": query[6],
-                "Status": query[7]
-            })
+# ============================================================
+# USER HELP & QUERIES
+# ============================================================
 
-        queries_df = pd.DataFrame(query_rows)
+elif page == "Help & Queries":
 
-        st.dataframe(
-            queries_df,
-            use_container_width=True,
-            hide_index=True,
-            height=500
-        )
-
-        st.caption(f"Total queries: {len(queries_df)} | Pending: {get_query_count()}")
-
-        st.divider()
-        st.subheader("Update Query Status")
-
-        query_options = {
-            f"#{q[0]} — {q[4]} — {q[2]}": q[0]
-            for q in queries
-        }
-
-        selected_query_label = st.selectbox(
-            "Select Query",
-            list(query_options.keys()),
-            key="admin_query_select"
-        )
-
-        selected_query_id = query_options[selected_query_label]
-
-        new_status = st.selectbox(
-            "Status",
-            ["Pending", "In Progress", "Resolved"],
-            key="admin_query_status"
-        )
-
-        if st.button(
-            "Update Query",
-            key="admin_update_query_button",
-            type="primary",
-            use_container_width=True
-        ):
-            if update_query_status(selected_query_id, new_status):
-                st.success("Query status updated successfully.")
-                st.rerun()
-            else:
-                st.error("Unable to update the query.")
-
-    else:
-        st.info("No user queries have been submitted yet.")
+    render_user_help_queries(current_user)
 
 
 # ============================================================
