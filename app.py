@@ -92,6 +92,14 @@ def show_options(options):
     ]
 
 
+def show_options_with_none(options):
+    """Return options with a zero-price Not Selected choice first."""
+    return ["Not Selected — ₹0"] + [
+        f"{name} — ₹{price:,.0f}"
+        for name, price in options.items()
+    ]
+
+
 # ============================================================
 # DATABASE
 # ============================================================
@@ -199,9 +207,177 @@ if "logged_in" not in st.session_state:
 if "user" not in st.session_state:
     st.session_state.user = None
 
+# ============================================================
+# CART
+# ============================================================
+
+if "cart" not in st.session_state:
+    st.session_state.cart = []
+
+# Reset old PC selections once when this cart version is first loaded.
+# This ensures the configurator starts with every component deselected.
+if "pc_cart_defaults_v3" not in st.session_state:
+    _pc_reset_keys = [
+        "pc_cpu", "pc_motherboard", "pc_ram", "pc_gpu",
+        "pc_storage", "pc_power_supply", "pc_cooling",
+        "pc_cabinet", "pc_monitor", "pc_keyboard", "pc_mouse",
+        "mac_cpu", "mac_ram", "mac_storage", "mac_gpu",
+        "mac_display", "mac_keyboard", "mac_mouse"
+    ]
+    for _key in _pc_reset_keys:
+        st.session_state.pop(_key, None)
+    st.session_state.pc_cart_defaults_v3 = True
 
 def go_to_page(page_name):
     st.session_state.user_navigation = page_name
+
+
+
+# ============================================================
+# CART FUNCTIONS
+# ============================================================
+
+def add_to_cart(name, price, category=None):
+    """Add an item to the cart, replacing the same component."""
+    item = {
+        "name": name,
+        "price": float(price)
+    }
+
+    if category:
+        item["category"] = category
+
+        st.session_state.cart = [
+            existing
+            for existing in st.session_state.cart
+            if existing.get("category") != category
+        ]
+
+    st.session_state.cart.append(item)
+
+
+def update_cart_item(category, name, price, operating_system):
+    """Immediately synchronize one selected component with the cart."""
+    st.session_state.cart_device_type = "PC"
+    st.session_state.cart_operating_system = operating_system
+
+    add_to_cart(
+        name,
+        price,
+        category=category
+    )
+
+
+def sync_selectbox_to_cart(
+    widget_key,
+    options,
+    category,
+    label_prefix,
+    operating_system
+):
+    """Read a changed selectbox and immediately put it in the cart."""
+    selected_display = st.session_state.get(
+        widget_key,
+        ""
+    )
+
+    selected_name = selected_display.split(" — ₹")[0]
+
+    # "Not Selected" means the component is deselected and
+    # must not appear in the cart.
+    if selected_name == "Not Selected":
+        st.session_state.cart = [
+            item
+            for item in st.session_state.cart
+            if item.get("category") != category
+        ]
+        return
+
+    if selected_name in options:
+        update_cart_item(
+            category,
+            f"{label_prefix} - {selected_name}",
+            options[selected_name],
+            operating_system
+        )
+
+
+def sync_accessories(widget_key, options, operating_system):
+    """Synchronize the selected accessories with the cart."""
+    st.session_state.cart_device_type = "PC"
+    st.session_state.cart_operating_system = operating_system
+
+    selected_values = st.session_state.get(
+        widget_key,
+        []
+    )
+
+    # Remove all current accessory items.
+    st.session_state.cart = [
+        item
+        for item in st.session_state.cart
+        if not item.get("category", "").startswith(
+            "accessory:"
+        )
+    ]
+
+    # Add the currently selected accessories.
+    for selected in selected_values:
+
+        name = selected.split(" — ₹")[0]
+
+        if name in options:
+            add_to_cart(
+                "Accessory - " + name,
+                options[name],
+                category=f"accessory:{name}"
+            )
+
+
+def handle_pc_platform_change():
+    """Start a fresh PC cart and reset component selections when OS changes."""
+    st.session_state.cart = []
+
+    windows_keys = [
+        "pc_cpu", "pc_motherboard", "pc_ram", "pc_gpu",
+        "pc_storage", "pc_power_supply", "pc_cooling",
+        "pc_cabinet", "pc_monitor", "pc_keyboard", "pc_mouse",
+        "pc_accessories"
+    ]
+
+    mac_keys = [
+        "mac_cpu", "mac_ram", "mac_storage", "mac_gpu",
+        "mac_display", "mac_keyboard", "mac_mouse",
+        "mac_accessories"
+    ]
+
+    for key in windows_keys + mac_keys:
+        if key in st.session_state:
+            if key.endswith("accessories"):
+                st.session_state[key] = []
+            else:
+                st.session_state[key] = "Not Selected — ₹0"
+
+    if st.session_state.get("pc_platform") == "macOS":
+        st.session_state.cart_operating_system = "macOS"
+    else:
+        st.session_state.cart_operating_system = "Windows"
+
+
+def remove_from_cart(index):
+    if 0 <= index < len(st.session_state.cart):
+        st.session_state.cart.pop(index)
+
+
+def clear_cart():
+    st.session_state.cart = []
+
+
+def get_cart_total():
+    return sum(
+        item["price"]
+        for item in st.session_state.cart
+    )
 
 
 
@@ -1678,764 +1854,815 @@ elif page == "PC Configurator":
         "Build your custom PC by selecting each component."
     )
 
-    st.divider()
-
     # ========================================================
-    # PLATFORM
+    # PC CONFIGURATOR LAYOUT
     # ========================================================
 
-    pc_type = st.selectbox(
-        "Select Platform",
-        [
-            "Windows PC",
-            "macOS"
-        ]
+    pc_left, pc_right = st.columns(
+        [3, 1.25],
+        gap="large"
     )
 
     # ========================================================
-    # WINDOWS PC
+    # LEFT SIDE — PC CONFIGURATOR
     # ========================================================
 
-    if pc_type == "Windows PC":
-
-        st.subheader("Windows PC")
-
-        st.write(
-            "Select the components for your custom Windows PC."
-        )
+    with pc_left:
 
         st.divider()
 
-        # ----------------------------------------------------
-        # PROCESSOR
-        # ----------------------------------------------------
-
-        cpu_display = st.selectbox(
-            "Processor",
-            show_options(CPU_OPTIONS)
+        pc_type = st.selectbox(
+            "Select Platform",
+            [
+                "Windows PC",
+                "macOS"
+            ],
+            key="pc_platform",
+            on_change=handle_pc_platform_change
         )
-
-        cpu = cpu_display.split(" — ₹")[0]
-
-        # ----------------------------------------------------
-        # MOTHERBOARD
-        # ----------------------------------------------------
-
-        motherboard_display = st.selectbox(
-            "Motherboard",
-            show_options(MOTHERBOARD_OPTIONS)
-        )
-
-        motherboard = motherboard_display.split(" — ₹")[0]
-
-        # ----------------------------------------------------
-        # RAM
-        # ----------------------------------------------------
-
-        ram_display = st.selectbox(
-            "RAM",
-            show_options(RAM_OPTIONS)
-        )
-
-        ram = ram_display.split(" — ₹")[0]
-
-        # ----------------------------------------------------
-        # GPU
-        # ----------------------------------------------------
-
-        gpu_display = st.selectbox(
-            "Graphics Card",
-            show_options(GPU_OPTIONS)
-        )
-
-        gpu = gpu_display.split(" — ₹")[0]
-
-        # ----------------------------------------------------
-        # STORAGE
-        # ----------------------------------------------------
-
-        storage_display = st.selectbox(
-            "Storage",
-            show_options(STORAGE_OPTIONS)
-        )
-
-        storage = storage_display.split(" — ₹")[0]
-
-        # ----------------------------------------------------
-        # POWER SUPPLY
-        # ----------------------------------------------------
-
-        power_supply_display = st.selectbox(
-            "Power Supply",
-            show_options(POWER_SUPPLY_OPTIONS)
-        )
-
-        power_supply = power_supply_display.split(" — ₹")[0]
-
-        # ----------------------------------------------------
-        # COOLING
-        # ----------------------------------------------------
-
-        cooling_display = st.selectbox(
-            "Cooling",
-            show_options(COOLING_OPTIONS)
-        )
-
-        cooling = cooling_display.split(" — ₹")[0]
-
-        # ----------------------------------------------------
-        # CABINET
-        # ----------------------------------------------------
-
-        cabinet_display = st.selectbox(
-            "Cabinet",
-            show_options(CABINET_OPTIONS)
-        )
-
-        cabinet = cabinet_display.split(" — ₹")[0]
-
-        # ----------------------------------------------------
-        # MONITOR
-        # ----------------------------------------------------
-
-        monitor_display = st.selectbox(
-            "Monitor",
-            show_options(MONITOR_OPTIONS)
-        )
-
-        monitor = monitor_display.split(" — ₹")[0]
-
-        # ----------------------------------------------------
-        # KEYBOARD
-        # ----------------------------------------------------
-
-        keyboard_display = st.selectbox(
-            "Keyboard",
-            show_options(KEYBOARD_OPTIONS)
-        )
-
-        keyboard = keyboard_display.split(" — ₹")[0]
-
-        # ----------------------------------------------------
-        # MOUSE
-        # ----------------------------------------------------
-
-        mouse_display = st.selectbox(
-            "Mouse",
-            show_options(MOUSE_OPTIONS)
-        )
-
-        mouse = mouse_display.split(" — ₹")[0]
 
         # ====================================================
-        # CONFIGURATION
+        # WINDOWS PC
         # ====================================================
 
-        configuration = {
+        if pc_type == "Windows PC":
 
-            "CPU": CPU_OPTIONS[cpu],
-
-            "Motherboard":
-                MOTHERBOARD_OPTIONS[motherboard],
-
-            "RAM":
-                RAM_OPTIONS[ram],
-
-            "GPU":
-                GPU_OPTIONS[gpu],
-
-            "Storage":
-                STORAGE_OPTIONS[storage],
-
-            "Power Supply":
-                POWER_SUPPLY_OPTIONS[power_supply],
-
-            "Cooling":
-                COOLING_OPTIONS[cooling],
-
-            "Cabinet":
-                CABINET_OPTIONS[cabinet],
-
-            "Monitor":
-                MONITOR_OPTIONS[monitor],
-
-            "Keyboard":
-                KEYBOARD_OPTIONS[keyboard],
-
-            "Mouse":
-                MOUSE_OPTIONS[mouse]
-        }
-
-
-
-        # ====================================================
-        # ACCESSORIES
-        # ====================================================
-
-        st.divider()
-
-        st.subheader("Accessories")
-
-        st.write(
-            "Select any accessories you want to add."
-        )
-
-        selected_accessories = st.multiselect(
-"Choose Accessories",
-            show_options(ACCESSORY_OPTIONS)
-        )
-
-
-        # ====================================================
-        # ACCESSORY PRICE
-        # ====================================================
-
-        accessory_names = [
-            item.split(" — ₹")[0]
-            for item in selected_accessories
-        ]
-
-        accessory_price = 0
-
-        for accessory in accessory_names:
-
-            accessory_price += ACCESSORY_OPTIONS[accessory]
-
-
-
-        # ====================================================
-        # PRICE
-        # ====================================================
-        # ====================================================
-        # PRICE BREAKDOWN
-        # ====================================================
-
-        pc_price = calculate_pc_price(
-            configuration
-        )
-
-        subtotal = pc_price + accessory_price
-
-
-        # ====================================================
-        # PRICE SUMMARY
-        # ====================================================
-
-        st.divider()
-
-        st.subheader("Price Summary")
-
-        col1, col2 = st.columns(2)
-
-        with col1:
-
-            st.write("**PC Components**")
-
-            st.write("**Accessories**")
-
-            st.write("**Final Price**")
-
-        with col2:
+            st.subheader("Windows PC")
 
             st.write(
-                f"₹{pc_price:,.2f}"
+                "Select the components for your custom Windows PC."
             )
 
-            st.write(
-                f"₹{accessory_price:,.2f}"
+            st.divider()
+
+            # ------------------------------------------------
+            # PROCESSOR
+            # ------------------------------------------------
+
+            cpu_display = st.selectbox(
+                "Processor",
+                show_options_with_none(CPU_OPTIONS),
+                key="pc_cpu",
+                on_change=sync_selectbox_to_cart,
+                args=(
+                    "pc_cpu",
+                    CPU_OPTIONS,
+                    "cpu",
+                    "CPU",
+                    "Windows"
+                )
             )
 
+            cpu = cpu_display.split(" — ₹")[0]
+
+            # ------------------------------------------------
+            # MOTHERBOARD
+            # ------------------------------------------------
+
+            motherboard_display = st.selectbox(
+                "Motherboard",
+                show_options_with_none(MOTHERBOARD_OPTIONS),
+                key="pc_motherboard",
+                on_change=sync_selectbox_to_cart,
+                args=(
+                    "pc_motherboard",
+                    MOTHERBOARD_OPTIONS,
+                    "motherboard",
+                    "Motherboard",
+                    "Windows"
+                )
+            )
+
+            motherboard = motherboard_display.split(" — ₹")[0]
+
+            # ------------------------------------------------
+            # RAM
+            # ------------------------------------------------
+
+            ram_display = st.selectbox(
+                "RAM",
+                show_options_with_none(RAM_OPTIONS),
+                key="pc_ram",
+                on_change=sync_selectbox_to_cart,
+                args=(
+                    "pc_ram",
+                    RAM_OPTIONS,
+                    "ram",
+                    "RAM",
+                    "Windows"
+                )
+            )
+
+            ram = ram_display.split(" — ₹")[0]
+
+            # ------------------------------------------------
+            # GPU
+            # ------------------------------------------------
+
+            gpu_display = st.selectbox(
+                "Graphics Card",
+                show_options_with_none(GPU_OPTIONS),
+                key="pc_gpu",
+                on_change=sync_selectbox_to_cart,
+                args=(
+                    "pc_gpu",
+                    GPU_OPTIONS,
+                    "gpu",
+                    "GPU",
+                    "Windows"
+                )
+            )
+
+            gpu = gpu_display.split(" — ₹")[0]
+
+            # ------------------------------------------------
+            # STORAGE
+            # ------------------------------------------------
+
+            storage_display = st.selectbox(
+                "Storage",
+                show_options_with_none(STORAGE_OPTIONS),
+                key="pc_storage",
+                on_change=sync_selectbox_to_cart,
+                args=(
+                    "pc_storage",
+                    STORAGE_OPTIONS,
+                    "storage",
+                    "Storage",
+                    "Windows"
+                )
+            )
+
+            storage = storage_display.split(" — ₹")[0]
+
+            # ------------------------------------------------
+            # POWER SUPPLY
+            # ------------------------------------------------
+
+            power_supply_display = st.selectbox(
+                "Power Supply",
+                show_options_with_none(POWER_SUPPLY_OPTIONS),
+                key="pc_power_supply",
+                on_change=sync_selectbox_to_cart,
+                args=(
+                    "pc_power_supply",
+                    POWER_SUPPLY_OPTIONS,
+                    "power_supply",
+                    "Power Supply",
+                    "Windows"
+                )
+            )
+
+            power_supply = power_supply_display.split(" — ₹")[0]
+
+            # ------------------------------------------------
+            # COOLING
+            # ------------------------------------------------
+
+            cooling_display = st.selectbox(
+                "Cooling",
+                show_options_with_none(COOLING_OPTIONS),
+                key="pc_cooling",
+                on_change=sync_selectbox_to_cart,
+                args=(
+                    "pc_cooling",
+                    COOLING_OPTIONS,
+                    "cooling",
+                    "Cooling",
+                    "Windows"
+                )
+            )
+
+            cooling = cooling_display.split(" — ₹")[0]
+
+            # ------------------------------------------------
+            # CABINET
+            # ------------------------------------------------
+
+            cabinet_display = st.selectbox(
+                "Cabinet",
+                show_options_with_none(CABINET_OPTIONS),
+                key="pc_cabinet",
+                on_change=sync_selectbox_to_cart,
+                args=(
+                    "pc_cabinet",
+                    CABINET_OPTIONS,
+                    "cabinet",
+                    "Cabinet",
+                    "Windows"
+                )
+            )
+
+            cabinet = cabinet_display.split(" — ₹")[0]
+
+            # ------------------------------------------------
+            # MONITOR
+            # ------------------------------------------------
+
+            monitor_display = st.selectbox(
+                "Monitor",
+                show_options_with_none(MONITOR_OPTIONS),
+                key="pc_monitor",
+                on_change=sync_selectbox_to_cart,
+                args=(
+                    "pc_monitor",
+                    MONITOR_OPTIONS,
+                    "monitor",
+                    "Monitor",
+                    "Windows"
+                )
+            )
+
+            monitor = monitor_display.split(" — ₹")[0]
+
+            # ------------------------------------------------
+            # KEYBOARD
+            # ------------------------------------------------
+
+            keyboard_display = st.selectbox(
+                "Keyboard",
+                show_options_with_none(KEYBOARD_OPTIONS),
+                key="pc_keyboard",
+                on_change=sync_selectbox_to_cart,
+                args=(
+                    "pc_keyboard",
+                    KEYBOARD_OPTIONS,
+                    "keyboard",
+                    "Keyboard",
+                    "Windows"
+                )
+            )
+
+            keyboard = keyboard_display.split(" — ₹")[0]
+
+            # ------------------------------------------------
+            # MOUSE
+            # ------------------------------------------------
+
+            mouse_display = st.selectbox(
+                "Mouse",
+                show_options_with_none(MOUSE_OPTIONS),
+                key="pc_mouse",
+                on_change=sync_selectbox_to_cart,
+                args=(
+                    "pc_mouse",
+                    MOUSE_OPTIONS,
+                    "mouse",
+                    "Mouse",
+                    "Windows"
+                )
+            )
+
+            mouse = mouse_display.split(" — ₹")[0]
+
+            # =================================================
+            # CONFIGURATION
+            # =================================================
+
+            configuration = {
+                "CPU": CPU_OPTIONS.get(cpu, 0),
+                "Motherboard": MOTHERBOARD_OPTIONS.get(motherboard, 0),
+                "RAM": RAM_OPTIONS.get(ram, 0),
+                "GPU": GPU_OPTIONS.get(gpu, 0),
+                "Storage": STORAGE_OPTIONS.get(storage, 0),
+                "Power Supply": POWER_SUPPLY_OPTIONS.get(power_supply, 0),
+                "Cooling": COOLING_OPTIONS.get(cooling, 0),
+                "Cabinet": CABINET_OPTIONS.get(cabinet, 0),
+                "Monitor": MONITOR_OPTIONS.get(monitor, 0),
+                "Keyboard": KEYBOARD_OPTIONS.get(keyboard, 0),
+                "Mouse": MOUSE_OPTIONS.get(mouse, 0)
+            }
+
+            # =================================================
+            # ACCESSORIES
+            # =================================================
+
+            st.divider()
+
+            st.subheader("Accessories")
+
             st.write(
+                "Select any accessories you want to add."
+            )
+
+            selected_accessories = st.multiselect(
+                "Choose Accessories",
+                show_options(ACCESSORY_OPTIONS),
+                key="pc_accessories",
+                on_change=sync_accessories,
+                args=(
+                    "pc_accessories",
+                    ACCESSORY_OPTIONS,
+                    "Windows"
+                )
+            )
+
+            accessory_names = [
+                item.split(" — ₹")[0]
+                for item in selected_accessories
+            ]
+
+            accessory_price = sum(
+                ACCESSORY_OPTIONS[accessory]
+                for accessory in accessory_names
+            )
+
+            # =================================================
+            # PRICE
+            # =================================================
+
+            pc_price = calculate_pc_price(configuration)
+            subtotal = pc_price + accessory_price
+
+            # =================================================
+            # PRICE SUMMARY
+            # =================================================
+
+            st.divider()
+
+            st.subheader("Price Summary")
+
+            price_col1, price_col2 = st.columns(2)
+
+            with price_col1:
+                st.write("**PC Components**")
+                st.write("**Accessories**")
+                st.write("**Final Price**")
+
+            with price_col2:
+                st.write(f"₹{pc_price:,.2f}")
+                st.write(f"₹{accessory_price:,.2f}")
+                st.write(f"₹{subtotal:,.2f}")
+
+            st.divider()
+
+            st.metric(
+                "Final Price",
                 f"₹{subtotal:,.2f}"
             )
 
+            # =================================================
+            # ORDER SUMMARY
+            # =================================================
 
-        st.divider()
+            st.divider()
 
-        st.metric(
-            "Final Price",
-            f"₹{subtotal:,.2f}"
-        )
+            st.subheader("Order Summary")
 
+            st.write("**Platform:** Windows PC")
+            st.write(f"**Processor:** {cpu}")
+            st.write(f"**Motherboard:** {motherboard}")
+            st.write(f"**RAM:** {ram}")
+            st.write(f"**Graphics Card:** {gpu}")
+            st.write(f"**Storage:** {storage}")
+            st.write(f"**Power Supply:** {power_supply}")
+            st.write(f"**Cooling:** {cooling}")
+            st.write(f"**Cabinet:** {cabinet}")
+            st.write(f"**Monitor:** {monitor}")
+            st.write(f"**Keyboard:** {keyboard}")
+            st.write(f"**Mouse:** {mouse}")
+
+            st.write("**Accessories:**")
+
+            if accessory_names:
+                for accessory in accessory_names:
+                    st.write(f"- {accessory}")
+            else:
+                st.write("No accessories selected.")
+
+            st.write("")
+            st.write(f"**Final Price: ₹{subtotal:,.2f}**")
 
         # ====================================================
-        # ORDER SUMMARY
+        # macOS CONFIGURATOR
         # ====================================================
-
-        st.divider()
-
-        st.subheader("Order Summary")
-
-        st.write("**Platform:** Windows PC")
-
-        st.write(
-            f"**Processor:** {cpu}"
-        )
-
-        st.write(
-            f"**Motherboard:** {motherboard}"
-        )
-
-        st.write(
-            f"**RAM:** {ram}"
-        )
-
-        st.write(
-            f"**Graphics Card:** {gpu}"
-        )
-
-        st.write(
-            f"**Storage:** {storage}"
-        )
-
-        st.write(
-            f"**Power Supply:** {power_supply}"
-        )
-
-        st.write(
-            f"**Cooling:** {cooling}"
-        )
-
-        st.write(
-            f"**Cabinet:** {cabinet}"
-        )
-
-        st.write(
-            f"**Monitor:** {monitor}"
-        )
-
-        st.write(
-            f"**Keyboard:** {keyboard}"
-        )
-
-        st.write(
-            f"**Mouse:** {mouse}"
-        )
-
-        st.write("**Accessories:**")
-
-        if accessory_names:
-
-            for accessory in accessory_names:
-
-                st.write(
-                    f"- {accessory}"
-                )
 
         else:
 
+            st.subheader("macOS")
+
             st.write(
-                "No accessories selected."
+                "Build your custom macOS system."
             )
 
-        st.write("")
+            st.divider()
 
-        st.write(
-            f"**Final Price: ₹{subtotal:,.2f}**"
-        )
+            # ------------------------------------------------
+            # PROCESSOR
+            # ------------------------------------------------
 
-
-        # ====================================================
-        # PLACE ORDER
-        # ====================================================
-
-        if st.button(
-            "Place Order",
-            use_container_width=True
-        ):
-
-            configuration_text = f"""
-CPU: {cpu}
-Motherboard: {motherboard}
-RAM: {ram}
-GPU: {gpu}
-Storage: {storage}
-Power Supply: {power_supply}
-Cooling: {cooling}
-Cabinet: {cabinet}
-Monitor: {monitor}
-Keyboard: {keyboard}
-Mouse: {mouse}
-"""
-
-            accessories_text = ", ".join(
-                accessory_names
+            mac_cpu_display = st.selectbox(
+                "Apple Processor",
+                show_options_with_none(MACOS_CPU_OPTIONS),
+                key="mac_cpu",
+                on_change=sync_selectbox_to_cart,
+                args=(
+                    "mac_cpu",
+                    MACOS_CPU_OPTIONS,
+                    "processor",
+                    "Processor",
+                    "macOS"
+                )
             )
 
-            order_date = datetime.now().strftime(
-                "%Y-%m-%d %H:%M:%S"
+            mac_cpu = mac_cpu_display.split(" — ₹")[0]
+
+            # ------------------------------------------------
+            # RAM
+            # ------------------------------------------------
+
+            mac_ram_display = st.selectbox(
+                "Memory",
+                show_options_with_none(MACOS_RAM_OPTIONS),
+                key="mac_ram",
+                on_change=sync_selectbox_to_cart,
+                args=(
+                    "mac_ram",
+                    MACOS_RAM_OPTIONS,
+                    "memory",
+                    "Memory",
+                    "macOS"
+                )
             )
 
-            create_order(
-                user_id=user_id,
-                device_type="PC",
-                operating_system="Windows",
-                configuration=configuration_text,
-                accessories=accessories_text,
-                subtotal=subtotal,
-                discount=0,
-                final_price=subtotal,
-                order_date=order_date
+            mac_ram = mac_ram_display.split(" — ₹")[0]
+
+            # ------------------------------------------------
+            # STORAGE
+            # ------------------------------------------------
+
+            mac_storage_display = st.selectbox(
+                "Storage",
+                show_options_with_none(MACOS_STORAGE_OPTIONS),
+                key="mac_storage",
+                on_change=sync_selectbox_to_cart,
+                args=(
+                    "mac_storage",
+                    MACOS_STORAGE_OPTIONS,
+                    "storage",
+                    "Storage",
+                    "macOS"
+                )
             )
 
-            st.success(
-                "Your order has been placed successfully."
+            mac_storage = mac_storage_display.split(" — ₹")[0]
+
+            # ------------------------------------------------
+            # GPU
+            # ------------------------------------------------
+
+            mac_gpu_display = st.selectbox(
+                "Graphics",
+                show_options_with_none(MACOS_GPU_OPTIONS),
+                key="mac_gpu",
+                on_change=sync_selectbox_to_cart,
+                args=(
+                    "mac_gpu",
+                    MACOS_GPU_OPTIONS,
+                    "graphics",
+                    "Graphics",
+                    "macOS"
+                )
             )
 
+            mac_gpu = mac_gpu_display.split(" — ₹")[0]
 
+            # ------------------------------------------------
+            # DISPLAY
+            # ------------------------------------------------
 
-    # ========================================================
-    # macOS CONFIGURATOR
-    # ========================================================
-
-    else:
-
-        st.subheader("macOS")
-
-        st.write(
-            "Build your custom macOS system."
-        )
-
-        st.divider()
-
-        # ----------------------------------------------------
-        # PROCESSOR
-        # ----------------------------------------------------
-
-        mac_cpu_display = st.selectbox(
-            "Apple Processor",
-            show_options(
-                MACOS_CPU_OPTIONS
+            mac_display_display = st.selectbox(
+                "Display",
+                show_options_with_none(MACOS_DISPLAY_OPTIONS),
+                key="mac_display",
+                on_change=sync_selectbox_to_cart,
+                args=(
+                    "mac_display",
+                    MACOS_DISPLAY_OPTIONS,
+                    "display",
+                    "Display",
+                    "macOS"
+                )
             )
-        )
 
-        mac_cpu = mac_cpu_display.split(
-            " — ₹"
-        )[0]
+            mac_display = mac_display_display.split(" — ₹")[0]
 
+            # ------------------------------------------------
+            # KEYBOARD
+            # ------------------------------------------------
 
-        # ----------------------------------------------------
-        # RAM
-        # ----------------------------------------------------
-
-        mac_ram_display = st.selectbox(
-            "Memory",
-            show_options(
-                MACOS_RAM_OPTIONS
+            mac_keyboard_display = st.selectbox(
+                "Keyboard",
+                show_options_with_none(MACOS_KEYBOARD_OPTIONS),
+                key="mac_keyboard",
+                on_change=sync_selectbox_to_cart,
+                args=(
+                    "mac_keyboard",
+                    MACOS_KEYBOARD_OPTIONS,
+                    "keyboard",
+                    "Keyboard",
+                    "macOS"
+                )
             )
-        )
 
-        mac_ram = mac_ram_display.split(
-            " — ₹"
-        )[0]
+            mac_keyboard = mac_keyboard_display.split(" — ₹")[0]
 
+            # ------------------------------------------------
+            # MOUSE / TRACKPAD
+            # ------------------------------------------------
 
-        # ----------------------------------------------------
-        # STORAGE
-        # ----------------------------------------------------
-
-        mac_storage_display = st.selectbox(
-            "Storage",
-            show_options(
-                MACOS_STORAGE_OPTIONS
+            mac_mouse_display = st.selectbox(
+                "Mouse / Trackpad",
+                show_options_with_none(MACOS_MOUSE_OPTIONS),
+                key="mac_mouse",
+                on_change=sync_selectbox_to_cart,
+                args=(
+                    "mac_mouse",
+                    MACOS_MOUSE_OPTIONS,
+                    "mouse",
+                    "Mouse / Trackpad",
+                    "macOS"
+                )
             )
-        )
 
-        mac_storage = mac_storage_display.split(
-            " — ₹"
-        )[0]
+            mac_mouse = mac_mouse_display.split(" — ₹")[0]
 
+            # =================================================
+            # ACCESSORIES
+            # =================================================
 
-        # ----------------------------------------------------
-        # GPU
-        # ----------------------------------------------------
+            st.divider()
 
-        mac_gpu_display = st.selectbox(
-            "Graphics",
-            show_options(
-                MACOS_GPU_OPTIONS
+            st.subheader("Accessories")
+
+            st.write(
+                "Select any accessories you want to add."
             )
-        )
 
-        mac_gpu = mac_gpu_display.split(
-            " — ₹"
-        )[0]
-
-
-        # ----------------------------------------------------
-        # DISPLAY
-        # ----------------------------------------------------
-
-        mac_display_display = st.selectbox(
-            "Display",
-            show_options(
-                MACOS_DISPLAY_OPTIONS
+            selected_mac_accessories = st.multiselect(
+                "Choose Accessories",
+                show_options(MACOS_ACCESSORY_OPTIONS),
+                key="mac_accessories",
+                on_change=sync_accessories,
+                args=(
+                    "mac_accessories",
+                    MACOS_ACCESSORY_OPTIONS,
+                    "macOS"
+                )
             )
-        )
 
-        mac_display = mac_display_display.split(
-            " — ₹"
-        )[0]
+            mac_accessory_names = [
+                item.split(" — ₹")[0]
+                for item in selected_mac_accessories
+            ]
 
-
-        # ----------------------------------------------------
-        # KEYBOARD
-        # ----------------------------------------------------
-
-        mac_keyboard_display = st.selectbox(
-            "Keyboard",
-            show_options(
-                MACOS_KEYBOARD_OPTIONS
-            )
-        )
-
-        mac_keyboard = mac_keyboard_display.split(
-            " — ₹"
-        )[0]
-
-
-        # ----------------------------------------------------
-        # MOUSE / TRACKPAD
-        # ----------------------------------------------------
-
-        mac_mouse_display = st.selectbox(
-            "Mouse / Trackpad",
-            show_options(
-                MACOS_MOUSE_OPTIONS
-            )
-        )
-
-        mac_mouse = mac_mouse_display.split(
-            " — ₹"
-        )[0]
-
-
-        # ====================================================
-        # ACCESSORIES
-        # ====================================================
-
-        st.divider()
-
-        st.subheader("Accessories")
-
-        st.write(
-            "Select any accessories you want to add."
-        )
-
-        selected_mac_accessories = st.multiselect(
-            "Choose Accessories",
-            show_options(
-                MACOS_ACCESSORY_OPTIONS
-            )
-        )
-
-        mac_accessory_names = [
-            item.split(" — ₹")[0]
-            for item in selected_mac_accessories
-        ]
-
-        mac_accessory_price = 0
-
-        for accessory in mac_accessory_names:
-        
-            mac_accessory_price += (
+            mac_accessory_price = sum(
                 MACOS_ACCESSORY_OPTIONS[accessory]
+                for accessory in mac_accessory_names
             )
 
+            # =================================================
+            # CONFIGURATION
+            # =================================================
 
+            mac_configuration = {
+                "Processor": MACOS_CPU_OPTIONS.get(mac_cpu, 0),
+                "Memory": MACOS_RAM_OPTIONS.get(mac_ram, 0),
+                "Storage": MACOS_STORAGE_OPTIONS.get(mac_storage, 0),
+                "Graphics": MACOS_GPU_OPTIONS.get(mac_gpu, 0),
+                "Display": MACOS_DISPLAY_OPTIONS.get(mac_display, 0),
+                "Keyboard": MACOS_KEYBOARD_OPTIONS.get(mac_keyboard, 0),
+                "Mouse / Trackpad": MACOS_MOUSE_OPTIONS.get(mac_mouse, 0)
+            }
 
-        # ====================================================
-        # CONFIGURATION
-        # ====================================================
+            # =================================================
+            # PRICE
+            # =================================================
 
-        mac_configuration = {
+            mac_component_price = sum(
+                mac_configuration.values()
+            )
 
-            "Processor":
-                MACOS_CPU_OPTIONS[mac_cpu],
+            mac_price = mac_component_price + mac_accessory_price
 
-            "Memory":
-                MACOS_RAM_OPTIONS[mac_ram],
+            # =================================================
+            # PRICE SUMMARY
+            # =================================================
 
-            "Storage":
-                MACOS_STORAGE_OPTIONS[mac_storage],
+            st.divider()
 
-            "Graphics":
-                MACOS_GPU_OPTIONS[mac_gpu],
+            st.subheader("Price Summary")
 
-            "Display":
-                MACOS_DISPLAY_OPTIONS[mac_display],
+            st.write(
+                f"**Processor:** ₹{MACOS_CPU_OPTIONS.get(mac_cpu, 0):,.2f}"
+            )
+            st.write(
+                f"**Memory:** ₹{MACOS_RAM_OPTIONS.get(mac_ram, 0):,.2f}"
+            )
+            st.write(
+                f"**Storage:** ₹{MACOS_STORAGE_OPTIONS.get(mac_storage, 0):,.2f}"
+            )
+            st.write(
+                f"**Graphics:** ₹{MACOS_GPU_OPTIONS.get(mac_gpu, 0):,.2f}"
+            )
+            st.write(
+                f"**Display:** ₹{MACOS_DISPLAY_OPTIONS.get(mac_display, 0):,.2f}"
+            )
+            st.write(
+                f"**Keyboard:** ₹{MACOS_KEYBOARD_OPTIONS.get(mac_keyboard, 0):,.2f}"
+            )
+            st.write(
+                f"**Mouse / Trackpad:** "
+                f"₹{MACOS_MOUSE_OPTIONS.get(mac_mouse, 0):,.2f}"
+            )
+            st.write(
+                f"**Accessories:** ₹{mac_accessory_price:,.2f}"
+            )
 
-            "Keyboard":
-                MACOS_KEYBOARD_OPTIONS[mac_keyboard],
+            st.divider()
 
-            "Mouse / Trackpad":
-                MACOS_MOUSE_OPTIONS[mac_mouse]
-        }
+            st.metric(
+                "Final Price",
+                f"₹{mac_price:,.2f}"
+            )
 
+            # =================================================
+            # MACOS ORDER SUMMARY
+            # =================================================
 
-        # ====================================================
-        # PRICE
-        # ====================================================
+            st.divider()
 
-        mac_price = sum(
-            mac_configuration.values()
-        )
+            st.subheader("Order Summary")
 
+            st.write("**Platform:** macOS")
+            st.write(f"**Processor:** {mac_cpu}")
+            st.write(f"**Memory:** {mac_ram}")
+            st.write(f"**Storage:** {mac_storage}")
+            st.write(f"**Graphics:** {mac_gpu}")
+            st.write(f"**Display:** {mac_display}")
+            st.write(f"**Keyboard:** {mac_keyboard}")
+            st.write(f"**Mouse / Trackpad:** {mac_mouse}")
 
-        st.divider()
+            st.write("**Accessories:**")
 
+            if mac_accessory_names:
+                for accessory in mac_accessory_names:
+                    st.write(f"- {accessory}")
+            else:
+                st.write("No accessories selected.")
 
-        st.subheader("Price Summary")
+            st.write("")
+            st.write(f"**Final Price: ₹{mac_price:,.2f}**")
 
-        st.write(
-            f"**Processor:** ₹{MACOS_CPU_OPTIONS[mac_cpu]:,.2f}"
-        )
+    # ========================================================
+    # RIGHT SIDE — CART
+    # ========================================================
 
-        st.write(
-            f"**Memory:** ₹{MACOS_RAM_OPTIONS[mac_ram]:,.2f}"
-        )
+    with pc_right:
 
-        st.write(
-            f"**Storage:** ₹{MACOS_STORAGE_OPTIONS[mac_storage]:,.2f}"
-        )
+        with st.container(border=True):
 
-        st.write(
-            f"**Graphics:** ₹{MACOS_GPU_OPTIONS[mac_gpu]:,.2f}"
-        )
+            st.subheader("🛒 Your Cart")
 
-        st.write(
-            f"**Display:** ₹{MACOS_DISPLAY_OPTIONS[mac_display]:,.2f}"
-        )
+            if not st.session_state.cart:
 
-        st.write(
-            f"**Keyboard:** ₹{MACOS_KEYBOARD_OPTIONS[mac_keyboard]:,.2f}"
-        )
-
-        st.write(
-            f"**Mouse / Trackpad:** "
-            f"₹{MACOS_MOUSE_OPTIONS[mac_mouse]:,.2f}"
-        )
-
-        st.write(
-            f"**Accessories:** "
-            f"₹{mac_accessory_price:,.2f}"
-        )
-
-        st.divider()
-
-        st.metric(
-            "Final Price",
-            f"₹{mac_price:,.2f}"
-        )
-
-
-
-
-        # ====================================================
-        # MACOS ORDER SUMMARY
-        # ====================================================
-
-        st.divider()
-
-        st.subheader("Order Summary")
-
-        st.write("**Platform:** macOS")
-
-        st.write(
-            f"**Processor:** {mac_cpu}"
-        )
-
-        st.write(
-            f"**Memory:** {mac_ram}"
-        )
-
-        st.write(
-            f"**Storage:** {mac_storage}"
-        )
-
-        st.write(
-            f"**Graphics:** {mac_gpu}"
-        )
-
-        st.write(
-            f"**Display:** {mac_display}"
-        )
-
-        st.write(
-            f"**Keyboard:** {mac_keyboard}"
-        )
-
-        st.write(
-            f"**Mouse / Trackpad:** {mac_mouse}"
-        )
-
-        st.write("**Accessories:**")
-
-        if mac_accessory_names:
-        
-            for accessory in mac_accessory_names:
-            
-                st.write(
-                    f"- {accessory}"
+                st.info(
+                    "Select a component on the left "
+                    "and it will appear here automatically."
                 )
 
-        else:
-        
-            st.write(
-                "No accessories selected."
-            )
+            else:
 
-        st.write("")
+                for index, item in enumerate(
+                    st.session_state.cart
+                ):
 
-        st.write( f"**Final Price: ₹{mac_price:,.2f}**"
-        )
+                    item_col1, item_col2 = st.columns(
+                        [4, 1.4],
+                        vertical_alignment="center"
+                    )
 
+                    with item_col1:
 
+                        st.markdown(
+                            f"**{item['name']}**"
+                        )
 
-# ====================================================
-# PLACE macOS ORDER
-# ====================================================
+                        st.caption(
+                            f"₹{item['price']:,.2f}"
+                        )
 
-        if st.button(
-            "Place Order",
-            use_container_width=True
-        ):
+                    with item_col2:
 
-            mac_configuration_text = f"""
-        Processor: {mac_cpu}
-        Memory: {mac_ram}
-        Storage: {mac_storage}
-        Graphics: {mac_gpu}
-        Display: {mac_display}
-        Keyboard: {mac_keyboard}
-        Mouse / Trackpad: {mac_mouse}
-        """
+                        if st.button(
+                            "✕",
+                            key=f"remove_cart_item_{index}",
+                            help=f"Remove {item['name']}",
+                            use_container_width=True
+                        ):
 
-            mac_accessories_text = ", ".join(
-                mac_accessory_names
-            )
+                            remove_from_cart(index)
+                            st.rerun()
 
-            order_date = datetime.now().strftime(
-                "%Y-%m-%d %H:%M:%S"
-            )
+                    st.divider()
 
-            create_order(
-                user_id=user_id,
-                device_type="PC",
-                operating_system="macOS",
-                configuration=mac_configuration_text,
-                accessories=mac_accessories_text,
-                subtotal=mac_price,
-                discount=0,
-                final_price=mac_price,
-                order_date=order_date
-            )
+                st.write(
+                    f"**Items: {len(st.session_state.cart)}**"
+                )
 
-            st.success(
-                "Your macOS order has been placed successfully."
-            )
+                st.markdown(
+                    f"### Total: ₹{get_cart_total():,.2f}"
+                )
 
+                cart_os = st.session_state.get(
+                    "cart_operating_system",
+                    "Windows"
+                )
 
+                st.caption(
+                    f"Platform: PC | OS: {cart_os}"
+                )
+
+                if st.button(
+                    "Place Order",
+                    key="place_cart_order",
+                    use_container_width=True,
+                    type="primary"
+                ):
+
+                    configuration_items = []
+                    accessory_items = []
+
+                    for item in st.session_state.cart:
+
+                        if item["name"].startswith(
+                            "Accessory - "
+                        ):
+
+                            accessory_items.append(
+                                item["name"].replace(
+                                    "Accessory - ",
+                                    ""
+                                )
+                            )
+
+                        else:
+
+                            configuration_items.append(
+                                item["name"]
+                            )
+
+                    configuration_text = "\n".join(
+                        configuration_items
+                    )
+
+                    accessories_text = ", ".join(
+                        accessory_items
+                    )
+
+                    cart_total = get_cart_total()
+
+                    order_date = datetime.now().strftime(
+                        "%Y-%m-%d %H:%M:%S"
+                    )
+
+                    create_order(
+                        user_id=user_id,
+                        device_type="PC",
+                        operating_system=cart_os,
+                        configuration=configuration_text,
+                        accessories=accessories_text,
+                        subtotal=cart_total,
+                        discount=0,
+                        final_price=cart_total,
+                        order_date=order_date
+                    )
+
+                    st.success(
+                        "Your order has been placed successfully."
+                    )
+
+                    clear_cart()
+
+                    st.session_state.cart_operating_system = (
+                        "Windows"
+                    )
+
+                    st.rerun()
+
+                if st.button(
+                    "Clear Cart",
+                    key="clear_cart_button",
+                    use_container_width=True
+                ):
+
+                    clear_cart()
+
+                    st.session_state.cart_operating_system = (
+                        "Windows"
+                    )
+
+                    st.rerun()
 
 
 # ============================================================
