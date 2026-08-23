@@ -229,6 +229,24 @@ if "pc_cart_defaults_v3" not in st.session_state:
         st.session_state.pop(_key, None)
     st.session_state.pc_cart_defaults_v3 = True
 
+# Reset mobile selections once so every smartphone option starts
+# as Not Selected / ₹0.
+if "mobile_cart_defaults_v1" not in st.session_state:
+    _mobile_reset_keys = [
+        "mobile_platform",
+        "iphone_display", "iphone_battery", "iphone_camera",
+        "iphone_ram", "iphone_storage", "iphone_processor",
+        "iphone_connectivity", "iphone_frame", "iphone_color",
+        "iphone_accessories",
+        "android_display", "android_battery", "android_camera",
+        "android_ram", "android_storage", "android_processor",
+        "android_connectivity", "android_build", "android_color",
+        "android_accessories"
+    ]
+    for _key in _mobile_reset_keys:
+        st.session_state.pop(_key, None)
+    st.session_state.mobile_cart_defaults_v1 = True
+
 def go_to_page(page_name):
     st.session_state.user_navigation = page_name
 
@@ -333,6 +351,112 @@ def sync_accessories(widget_key, options, operating_system):
                 options[name],
                 category=f"accessory:{name}"
             )
+
+
+def update_mobile_cart_item(category, name, price, operating_system):
+    """Immediately synchronize one selected smartphone component with the cart."""
+    st.session_state.cart_device_type = "Mobile"
+    st.session_state.cart_operating_system = operating_system
+
+    add_to_cart(
+        name,
+        price,
+        category=category
+    )
+
+
+def sync_mobile_selectbox_to_cart(
+    widget_key,
+    options,
+    category,
+    label_prefix,
+    operating_system
+):
+    """Immediately synchronize one iPhone/Android selection with the cart."""
+    selected_display = st.session_state.get(
+        widget_key,
+        "Not Selected — ₹0"
+    )
+
+    selected_name = selected_display.split(" — ₹")[0]
+
+    if selected_name == "Not Selected":
+        st.session_state.cart = [
+            item
+            for item in st.session_state.cart
+            if item.get("category") != category
+        ]
+        return
+
+    if selected_name in options:
+        update_mobile_cart_item(
+            category,
+            f"{label_prefix} - {selected_name}",
+            options[selected_name],
+            operating_system
+        )
+
+
+def sync_mobile_accessories(widget_key, options, operating_system):
+    """Synchronize selected smartphone accessories with the cart."""
+    st.session_state.cart_device_type = "Mobile"
+    st.session_state.cart_operating_system = operating_system
+
+    selected_values = st.session_state.get(
+        widget_key,
+        []
+    )
+
+    st.session_state.cart = [
+        item
+        for item in st.session_state.cart
+        if not item.get("category", "").startswith(
+            "mobile_accessory:"
+        )
+    ]
+
+    for selected in selected_values:
+        name = selected.split(" — ₹")[0]
+
+        if name in options:
+            add_to_cart(
+                "Accessory - " + name,
+                options[name],
+                category=f"mobile_accessory:{name}"
+            )
+
+
+def handle_mobile_platform_change():
+    """Start a fresh smartphone cart when switching iPhone/Android."""
+    st.session_state.cart = []
+    st.session_state.cart_device_type = "Mobile"
+
+    mobile_keys = [
+        "iphone_display", "iphone_battery", "iphone_camera",
+        "iphone_ram", "iphone_storage", "iphone_processor",
+        "iphone_connectivity", "iphone_frame", "iphone_color",
+        "iphone_accessories",
+        "android_display", "android_battery", "android_camera",
+        "android_ram", "android_storage", "android_processor",
+        "android_connectivity", "android_build", "android_color",
+        "android_accessories"
+    ]
+
+    for key in mobile_keys:
+        if key.endswith("accessories"):
+            st.session_state[key] = []
+        else:
+            st.session_state[key] = "Not Selected — ₹0"
+
+    if st.session_state.get("mobile_platform") == "iPhone":
+        st.session_state.cart_operating_system = "iOS"
+    else:
+        st.session_state.cart_operating_system = "Android"
+
+
+def selected_price(options, selected_name):
+    """Return zero for Not Selected, otherwise return the option price."""
+    return float(options.get(selected_name, 0))
 
 
 def handle_pc_platform_change():
@@ -461,7 +585,6 @@ if not st.session_state.logged_in:
     st.title("QuadOS")
     st.subheader("Secure Login")
 
-    # CREATE THE TABS FIRST
     login_tab, register_tab = st.tabs(
         ["Login", "Create Account"]
     )
@@ -472,63 +595,57 @@ if not st.session_state.logged_in:
 
     with login_tab:
 
-        st.write(
-            "Use your registered email and password to continue."
-        )
+        st.caption("Use your registered email and password to continue.")
 
-        email = st.text_input(
+        login_email = st.text_input(
             "Email",
-            key="login_email"
+            key="login_email",
+            placeholder="name@example.com"
         )
 
-        password = st.text_input(
+        show_login_password = st.checkbox(
+            "Show password",
+            key="show_login_password"
+        )
+
+        login_password = st.text_input(
             "Password",
-            type="password",
+            type="default" if show_login_password else "password",
             key="login_password"
         )
 
         if st.button(
             "Login",
-            key="login_button",
-            use_container_width=True
+            use_container_width=True,
+            type="primary"
         ):
 
-            # Do NOT use strict email validation here.
-            # This allows existing QuadOS users to continue
-            # using the identifier stored in the database.
+            valid_email, email_message = validate_email(login_email)
 
-            email = email.strip().lower()
+            if not valid_email:
+                st.warning(email_message)
 
-            if email == "":
-                st.warning(
-                    "Please enter your email."
-                )
-
-            elif password == "":
-                st.warning(
-                    "Please enter your password."
-                )
+            elif not login_password:
+                st.warning("Password is required.")
 
             else:
+                normalized_login_email = normalize_email(login_email)
 
                 user = login_user(
-                    email,
-                    password
+                    normalized_login_email,
+                    login_password
                 )
 
                 if user:
-
                     st.session_state.logged_in = True
                     st.session_state.user = user
-
+                    st.session_state.login_failed_attempts = 0
                     st.rerun()
 
                 else:
-
                     st.error(
-                        "Invalid email or password."
+                        "Invalid email or password. Please check your credentials and try again."
                     )
-
 
     # ========================================================
     # CREATE ACCOUNT
@@ -536,164 +653,94 @@ if not st.session_state.logged_in:
 
     with register_tab:
 
-        st.write(
-            "Create a new QuadOS user account."
+        st.subheader("Create User Account")
+        st.caption(
+            "Password must be at least 8 characters and include an uppercase letter, lowercase letter and number."
         )
 
-        name = st.text_input(
+        register_name = st.text_input(
             "Full Name",
-            key="register_name"
+            key="register_name",
+            placeholder="Your full name"
         )
 
-        email = st.text_input(
+        register_email = st.text_input(
             "Email",
-            key="register_email"
+            key="register_email",
+            placeholder="name@example.com"
         )
 
-        password = st.text_input(
+        register_password = st.text_input(
             "Password",
             type="password",
-            key="register_password"
+            key="register_password",
+            placeholder="Create a strong password"
         )
 
-        confirm_password = st.text_input(
+        register_confirm_password = st.text_input(
             "Confirm Password",
             type="password",
-            key="register_confirm_password"
+            key="register_confirm_password",
+            placeholder="Re-enter your password"
         )
 
-        phone = st.text_input(
+        register_phone = st.text_input(
             "Phone",
-            key="register_phone"
+            key="register_phone",
+            placeholder="Optional"
         )
 
-        address = st.text_area(
+        register_address = st.text_area(
             "Address",
-            key="register_address"
+            key="register_address",
+            placeholder="Optional"
         )
 
         if st.button(
             "Create Account",
-            key="create_account_button",
-            use_container_width=True
+            use_container_width=True,
+            type="primary"
         ):
 
-            name = name.strip()
-            email = email.strip().lower()
-            phone = phone.strip()
-            address = address.strip()
+            valid, validation_message = validate_registration(
+                register_name,
+                register_email,
+                register_password,
+                register_confirm_password,
+                register_phone,
+                register_address
+            )
 
-            # -----------------------------
-            # REQUIRED FIELDS
-            # -----------------------------
-
-            if name == "":
-                st.warning(
-                    "Please enter your full name."
-                )
-
-            elif email == "":
-                st.warning(
-                    "Please enter your email."
-                )
-
-            elif password == "":
-                st.warning(
-                    "Please enter a password."
-                )
-
-            elif confirm_password == "":
-                st.warning(
-                    "Please confirm your password."
-                )
-
-            # -----------------------------
-            # PASSWORD MATCH
-            # -----------------------------
-
-            elif password != confirm_password:
-
-                st.error(
-                    "Passwords do not match."
-                )
-
-            # -----------------------------
-            # PASSWORD LENGTH
-            # -----------------------------
-
-            elif len(password) < 8:
-
-                st.error(
-                    "Password must contain at least 8 characters."
-                )
-
-            # -----------------------------
-            # PASSWORD UPPERCASE
-            # -----------------------------
-
-            elif not any(
-                character.isupper()
-                for character in password
-            ):
-
-                st.error(
-                    "Password must contain at least one uppercase letter."
-                )
-
-            # -----------------------------
-            # PASSWORD LOWERCASE
-            # -----------------------------
-
-            elif not any(
-                character.islower()
-                for character in password
-            ):
-
-                st.error(
-                    "Password must contain at least one lowercase letter."
-                )
-
-            # -----------------------------
-            # PASSWORD NUMBER
-            # -----------------------------
-
-            elif not any(
-                character.isdigit()
-                for character in password
-            ):
-
-                st.error(
-                    "Password must contain at least one number."
-                )
-
-            # -----------------------------
-            # CREATE USER
-            # -----------------------------
+            if not valid:
+                st.warning(validation_message)
 
             else:
+                clean_name = " ".join(
+                    register_name.strip().split()
+                )
+                clean_email = normalize_email(register_email)
+                clean_phone = register_phone.strip()
+                clean_address = register_address.strip()
 
                 success = create_user(
-                    name,
-                    email,
-                    password,
-                    phone,
-                    address
+                    clean_name,
+                    clean_email,
+                    register_password,
+                    clean_phone,
+                    clean_address
                 )
 
                 if success:
-
                     st.success(
-                        "Account created successfully. "
-                        "You can now login."
+                        "Account created successfully. You can now login."
                     )
-
                 else:
-
                     st.error(
-                        "This email is already registered."
+                        "This email is already registered. Please use another email or login with the existing account."
                     )
 
     st.stop()
+
 
 # ============================================================
 # GET CURRENT USER
@@ -2827,893 +2874,617 @@ elif page == "PC Configurator":
 
 elif page == "Mobile Configurator":
 
+    # A cart belongs to the currently active device builder.
+    # Switching from PC to Mobile starts a fresh mobile cart.
+    if st.session_state.get("cart_device_type") != "Mobile":
+        st.session_state.cart = []
+        st.session_state.cart_device_type = "Mobile"
+        st.session_state.cart_operating_system = "iOS"
+
     st.title("Mobile Configurator")
 
     st.write(
         "Create your custom smartphone."
     )
 
-    mobile_type = st.selectbox(
-        "Select Platform",
-        [
-            "iPhone",
-            "Android"
-        ]
+    mobile_left, mobile_right = st.columns(
+        [3, 1.25],
+        gap="large"
     )
 
-    # ========================================================
-    # iPHONE
-    # ========================================================
-
-    if mobile_type == "iPhone":
-
-        st.subheader("Custom iPhone")
-
-        st.write(
-            "Build your iPhone by selecting individual features."
-        )
+    with mobile_left:
 
         st.divider()
 
-        # ----------------------------------------------------
-        # DISPLAY
-        # ----------------------------------------------------
-
-        iphone_display_display = st.selectbox(
-            "Display",
-            show_options(
-                IPHONE_DISPLAY_OPTIONS
-            )
+        mobile_type = st.selectbox(
+            "Select Platform",
+            [
+                "iPhone",
+                "Android"
+            ],
+            key="mobile_platform",
+            on_change=handle_mobile_platform_change
         )
 
-        iphone_display = iphone_display_display.split(
-            " — ₹"
-        )[0]
+        # ========================================================
+        # iPHONE
+        # ========================================================
 
-        # ----------------------------------------------------
-        # BATTERY
-        # ----------------------------------------------------
+        if mobile_type == "iPhone":
 
-        iphone_battery_display = st.selectbox(
-            "Battery Capacity",
-            show_options(
-                IPHONE_BATTERY_OPTIONS
-            )
-        )
+            st.subheader("Custom iPhone")
 
-        iphone_battery = iphone_battery_display.split(
-            " — ₹"
-        )[0]
-
-        # ----------------------------------------------------
-        # CAMERA
-        # ----------------------------------------------------
-
-        iphone_camera_display = st.selectbox(
-            "Camera",
-            show_options(
-                IPHONE_CAMERA_OPTIONS
-            )
-        )
-
-        iphone_camera = iphone_camera_display.split(
-            " — ₹"
-        )[0]
-
-        # ----------------------------------------------------
-        # RAM
-        # ----------------------------------------------------
-
-        iphone_ram_display = st.selectbox(
-            "RAM",
-            show_options(
-                IPHONE_RAM_OPTIONS
-            )
-        )
-
-        iphone_ram = iphone_ram_display.split(
-            " — ₹"
-        )[0]
-
-        # ----------------------------------------------------
-        # STORAGE
-        # ----------------------------------------------------
-
-        iphone_storage_display = st.selectbox(
-            "Storage",
-            show_options(
-                IPHONE_STORAGE_OPTIONS
-            )
-        )
-
-        iphone_storage = iphone_storage_display.split(
-            " — ₹"
-        )[0]
-
-        # ----------------------------------------------------
-        # PROCESSOR
-        # ----------------------------------------------------
-
-        iphone_processor_display = st.selectbox(
-            "Processor",
-            show_options(
-                IPHONE_PROCESSOR_OPTIONS
-            )
-        )
-
-        iphone_processor = iphone_processor_display.split(
-            " — ₹"
-        )[0]
-
-        # ----------------------------------------------------
-        # CONNECTIVITY
-        # ----------------------------------------------------
-
-        iphone_connectivity_display = st.selectbox(
-            "Connectivity",
-            show_options(
-                IPHONE_CONNECTIVITY_OPTIONS
-            )
-        )
-
-        iphone_connectivity = iphone_connectivity_display.split(
-            " — ₹"
-        )[0]
-
-        # ----------------------------------------------------
-        # FRAME
-        # ----------------------------------------------------
-
-        iphone_frame_display = st.selectbox(
-            "Frame Material",
-            show_options(
-                IPHONE_FRAME_OPTIONS
-            )
-        )
-
-        iphone_frame = iphone_frame_display.split(
-            " — ₹"
-        )[0]
-
-        # ----------------------------------------------------
-        # COLOR
-        # ----------------------------------------------------
-
-        iphone_color_display = st.selectbox(
-            "Color",
-            show_options(
-                IPHONE_COLOR_OPTIONS
-            )
-        )
-
-        iphone_color = iphone_color_display.split(
-            " — ₹"
-        )[0]
-
-        # ====================================================
-        # PRICE CALCULATION
-        # ====================================================
-
-        iphone_configuration = {
-
-            "Display":
-                IPHONE_DISPLAY_OPTIONS[
-                    iphone_display
-                ],
-
-            "Battery":
-                IPHONE_BATTERY_OPTIONS[
-                    iphone_battery
-                ],
-
-            "Camera":
-                IPHONE_CAMERA_OPTIONS[
-                    iphone_camera
-                ],
-
-            "RAM":
-                IPHONE_RAM_OPTIONS[
-                    iphone_ram
-                ],
-
-            "Storage":
-                IPHONE_STORAGE_OPTIONS[
-                    iphone_storage
-                ],
-
-            "Processor":
-                IPHONE_PROCESSOR_OPTIONS[
-                    iphone_processor
-                ],
-
-            "Connectivity":
-                IPHONE_CONNECTIVITY_OPTIONS[
-                    iphone_connectivity
-                ],
-
-            "Frame":
-                IPHONE_FRAME_OPTIONS[
-                    iphone_frame
-                ],
-
-            "Color":
-                IPHONE_COLOR_OPTIONS[
-                    iphone_color
-                ]
-        }
-
-        iphone_price = sum(iphone_configuration.values()
-        )
-
-
-        # ====================================================
-        # ACCESSORIES
-        # ====================================================
-
-        st.divider()
-
-        st.subheader("Accessories")
-
-        st.write(
-            "Select any accessories you want to add."
-        )
-
-        selected_iphone_accessories = st.multiselect(
-            "Choose Accessories",
-            show_options(
-                IPHONE_ACCESSORY_OPTIONS
-            )
-        )
-
-        iphone_accessory_names = [
-            item.split(" — ₹")[0]
-            for item in selected_iphone_accessories
-        ]
-
-        iphone_accessory_price = 0
-
-        for accessory in iphone_accessory_names:
-        
-            iphone_accessory_price += (
-                IPHONE_ACCESSORY_OPTIONS[accessory]
+            st.write(
+                "Build your iPhone by selecting individual features."
             )
 
+            st.divider()
 
-        # ====================================================
-        # FINAL PRICE
-        # ====================================================
-
-        iphone_price = (
-            iphone_price
-            + iphone_accessory_price
-        )
-
-
-
-        # ====================================================
-        # PRICE SUMMARY
-        # ====================================================
-
-        st.divider()
-
-        st.subheader("Price Summary")
-
-        st.write(
-            f"**Display:** "
-            f"₹{IPHONE_DISPLAY_OPTIONS[iphone_display]:,.2f}"
-        )
-
-        st.write(
-            f"**Battery:** "
-            f"₹{IPHONE_BATTERY_OPTIONS[iphone_battery]:,.2f}"
-        )
-
-        st.write(
-            f"**Camera:** "
-            f"₹{IPHONE_CAMERA_OPTIONS[iphone_camera]:,.2f}"
-        )
-
-        st.write(
-            f"**RAM:** "
-            f"₹{IPHONE_RAM_OPTIONS[iphone_ram]:,.2f}"
-        )
-
-        st.write(
-            f"**Storage:** "
-            f"₹{IPHONE_STORAGE_OPTIONS[iphone_storage]:,.2f}"
-        )
-
-        st.write(
-            f"**Processor:** "
-            f"₹{IPHONE_PROCESSOR_OPTIONS[iphone_processor]:,.2f}"
-        )
-
-        st.write(
-            f"**Connectivity:** "
-            f"₹{IPHONE_CONNECTIVITY_OPTIONS[iphone_connectivity]:,.2f}"
-        )
-
-        st.write(
-            f"**Frame:** "
-            f"₹{IPHONE_FRAME_OPTIONS[iphone_frame]:,.2f}"
-        )
-
-        st.write(
-            f"**Color:** "
-            f"₹{IPHONE_COLOR_OPTIONS[iphone_color]:,.2f}"
-        )
-
-        st.write(
-            f"**Accessories:** "
-            f"₹{iphone_accessory_price:,.2f}"
-)
-
-        st.divider()
-
-        st.metric(
-            "Final Price",
-            f"₹{iphone_price:,.2f}"
-        )
-
-
-        # ====================================================
-        # iPHONE ORDER SUMMARY
-        # ====================================================
-
-        st.divider()
-
-        st.subheader("Order Summary")
-
-        st.write("**Device:** iPhone")
-
-        st.write(
-            f"**Display:** {iphone_display}"
-        )
-
-        st.write(
-            f"**Battery:** {iphone_battery}"
-        )
-
-        st.write(
-            f"**Camera:** {iphone_camera}"
-        )
-
-        st.write(
-            f"**RAM:** {iphone_ram}"
-        )
-
-        st.write(
-            f"**Storage:** {iphone_storage}"
-        )
-
-        st.write(
-            f"**Processor:** {iphone_processor}"
-        )
-
-        st.write(
-            f"**Connectivity:** {iphone_connectivity}"
-        )
-
-        st.write(
-            f"**Frame:** {iphone_frame}"
-        )
-
-        st.write(
-            f"**Color:** {iphone_color}"
-        )
-
-        st.write("**Accessories:**")
-
-        if iphone_accessory_names:
-        
-            for accessory in iphone_accessory_names:
-            
-                st.write(
-                    f"- {accessory}"
+            iphone_display_display = st.selectbox(
+                "Display",
+                show_options_with_none(IPHONE_DISPLAY_OPTIONS),
+                key="iphone_display",
+                on_change=sync_mobile_selectbox_to_cart,
+                args=(
+                    "iphone_display",
+                    IPHONE_DISPLAY_OPTIONS,
+                    "iphone_display",
+                    "Display",
+                    "iOS"
                 )
+            )
+            iphone_display = iphone_display_display.split(" — ₹")[0]
+
+            iphone_battery_display = st.selectbox(
+                "Battery Capacity",
+                show_options_with_none(IPHONE_BATTERY_OPTIONS),
+                key="iphone_battery",
+                on_change=sync_mobile_selectbox_to_cart,
+                args=(
+                    "iphone_battery",
+                    IPHONE_BATTERY_OPTIONS,
+                    "iphone_battery",
+                    "Battery",
+                    "iOS"
+                )
+            )
+            iphone_battery = iphone_battery_display.split(" — ₹")[0]
+
+            iphone_camera_display = st.selectbox(
+                "Camera",
+                show_options_with_none(IPHONE_CAMERA_OPTIONS),
+                key="iphone_camera",
+                on_change=sync_mobile_selectbox_to_cart,
+                args=(
+                    "iphone_camera",
+                    IPHONE_CAMERA_OPTIONS,
+                    "iphone_camera",
+                    "Camera",
+                    "iOS"
+                )
+            )
+            iphone_camera = iphone_camera_display.split(" — ₹")[0]
+
+            iphone_ram_display = st.selectbox(
+                "RAM",
+                show_options_with_none(IPHONE_RAM_OPTIONS),
+                key="iphone_ram",
+                on_change=sync_mobile_selectbox_to_cart,
+                args=(
+                    "iphone_ram",
+                    IPHONE_RAM_OPTIONS,
+                    "iphone_ram",
+                    "RAM",
+                    "iOS"
+                )
+            )
+            iphone_ram = iphone_ram_display.split(" — ₹")[0]
+
+            iphone_storage_display = st.selectbox(
+                "Storage",
+                show_options_with_none(IPHONE_STORAGE_OPTIONS),
+                key="iphone_storage",
+                on_change=sync_mobile_selectbox_to_cart,
+                args=(
+                    "iphone_storage",
+                    IPHONE_STORAGE_OPTIONS,
+                    "iphone_storage",
+                    "Storage",
+                    "iOS"
+                )
+            )
+            iphone_storage = iphone_storage_display.split(" — ₹")[0]
+
+            iphone_processor_display = st.selectbox(
+                "Processor",
+                show_options_with_none(IPHONE_PROCESSOR_OPTIONS),
+                key="iphone_processor",
+                on_change=sync_mobile_selectbox_to_cart,
+                args=(
+                    "iphone_processor",
+                    IPHONE_PROCESSOR_OPTIONS,
+                    "iphone_processor",
+                    "Processor",
+                    "iOS"
+                )
+            )
+            iphone_processor = iphone_processor_display.split(" — ₹")[0]
+
+            iphone_connectivity_display = st.selectbox(
+                "Connectivity",
+                show_options_with_none(IPHONE_CONNECTIVITY_OPTIONS),
+                key="iphone_connectivity",
+                on_change=sync_mobile_selectbox_to_cart,
+                args=(
+                    "iphone_connectivity",
+                    IPHONE_CONNECTIVITY_OPTIONS,
+                    "iphone_connectivity",
+                    "Connectivity",
+                    "iOS"
+                )
+            )
+            iphone_connectivity = iphone_connectivity_display.split(" — ₹")[0]
+
+            iphone_frame_display = st.selectbox(
+                "Frame Material",
+                show_options_with_none(IPHONE_FRAME_OPTIONS),
+                key="iphone_frame",
+                on_change=sync_mobile_selectbox_to_cart,
+                args=(
+                    "iphone_frame",
+                    IPHONE_FRAME_OPTIONS,
+                    "iphone_frame",
+                    "Frame",
+                    "iOS"
+                )
+            )
+            iphone_frame = iphone_frame_display.split(" — ₹")[0]
+
+            iphone_color_display = st.selectbox(
+                "Color",
+                show_options_with_none(IPHONE_COLOR_OPTIONS),
+                key="iphone_color",
+                on_change=sync_mobile_selectbox_to_cart,
+                args=(
+                    "iphone_color",
+                    IPHONE_COLOR_OPTIONS,
+                    "iphone_color",
+                    "Color",
+                    "iOS"
+                )
+            )
+            iphone_color = iphone_color_display.split(" — ₹")[0]
+
+            iphone_configuration = {
+                "Display": selected_price(IPHONE_DISPLAY_OPTIONS, iphone_display),
+                "Battery": selected_price(IPHONE_BATTERY_OPTIONS, iphone_battery),
+                "Camera": selected_price(IPHONE_CAMERA_OPTIONS, iphone_camera),
+                "RAM": selected_price(IPHONE_RAM_OPTIONS, iphone_ram),
+                "Storage": selected_price(IPHONE_STORAGE_OPTIONS, iphone_storage),
+                "Processor": selected_price(IPHONE_PROCESSOR_OPTIONS, iphone_processor),
+                "Connectivity": selected_price(IPHONE_CONNECTIVITY_OPTIONS, iphone_connectivity),
+                "Frame": selected_price(IPHONE_FRAME_OPTIONS, iphone_frame),
+                "Color": selected_price(IPHONE_COLOR_OPTIONS, iphone_color)
+            }
+
+            st.divider()
+            st.subheader("Accessories")
+            st.write("Select any accessories you want to add.")
+
+            selected_iphone_accessories = st.multiselect(
+                "Choose Accessories",
+                show_options(IPHONE_ACCESSORY_OPTIONS),
+                key="iphone_accessories",
+                on_change=sync_mobile_accessories,
+                args=(
+                    "iphone_accessories",
+                    IPHONE_ACCESSORY_OPTIONS,
+                    "iOS"
+                )
+            )
+
+            iphone_accessory_names = [
+                item.split(" — ₹")[0]
+                for item in selected_iphone_accessories
+            ]
+
+            iphone_accessory_price = sum(
+                IPHONE_ACCESSORY_OPTIONS[name]
+                for name in iphone_accessory_names
+            )
+
+            iphone_price = sum(iphone_configuration.values()) + iphone_accessory_price
+
+            st.divider()
+            st.subheader("Price Summary")
+
+            for label, price in iphone_configuration.items():
+                st.write(f"**{label}:** ₹{price:,.2f}")
+
+            st.write(f"**Accessories:** ₹{iphone_accessory_price:,.2f}")
+
+            st.divider()
+            st.metric("Final Price", f"₹{iphone_price:,.2f}")
+
+            st.divider()
+            st.subheader("Order Summary")
+            st.write("**Device:** iPhone")
+            st.write(f"**Display:** {iphone_display}")
+            st.write(f"**Battery:** {iphone_battery}")
+            st.write(f"**Camera:** {iphone_camera}")
+            st.write(f"**RAM:** {iphone_ram}")
+            st.write(f"**Storage:** {iphone_storage}")
+            st.write(f"**Processor:** {iphone_processor}")
+            st.write(f"**Connectivity:** {iphone_connectivity}")
+            st.write(f"**Frame:** {iphone_frame}")
+            st.write(f"**Color:** {iphone_color}")
+            st.write("**Accessories:**")
+            if iphone_accessory_names:
+                for accessory in iphone_accessory_names:
+                    st.write(f"- {accessory}")
+            else:
+                st.write("No accessories selected.")
+            st.write(f"**Current Selection Price: ₹{iphone_price:,.2f}**")
+
+        # ========================================================
+        # ANDROID
+        # ========================================================
 
         else:
-        
+
+            st.subheader("Custom Android")
+
             st.write(
-                "No accessories selected."
+                "Build your Android smartphone by selecting individual features."
             )
 
-        st.write("")
+            st.divider()
 
-        st.write(
-            f"**Final Price: ₹{iphone_price:,.2f}**"
-        )
+            android_display_display = st.selectbox(
+                "Display",
+                show_options_with_none(ANDROID_DISPLAY_OPTIONS),
+                key="android_display",
+                on_change=sync_mobile_selectbox_to_cart,
+                args=(
+                    "android_display",
+                    ANDROID_DISPLAY_OPTIONS,
+                    "android_display",
+                    "Display",
+                    "Android"
+                )
+            )
+            android_display = android_display_display.split(" — ₹")[0]
 
+            android_battery_display = st.selectbox(
+                "Battery Capacity",
+                show_options_with_none(ANDROID_BATTERY_OPTIONS),
+                key="android_battery",
+                on_change=sync_mobile_selectbox_to_cart,
+                args=(
+                    "android_battery",
+                    ANDROID_BATTERY_OPTIONS,
+                    "android_battery",
+                    "Battery",
+                    "Android"
+                )
+            )
+            android_battery = android_battery_display.split(" — ₹")[0]
 
+            android_camera_display = st.selectbox(
+                "Camera",
+                show_options_with_none(ANDROID_CAMERA_OPTIONS),
+                key="android_camera",
+                on_change=sync_mobile_selectbox_to_cart,
+                args=(
+                    "android_camera",
+                    ANDROID_CAMERA_OPTIONS,
+                    "android_camera",
+                    "Camera",
+                    "Android"
+                )
+            )
+            android_camera = android_camera_display.split(" — ₹")[0]
 
-        # ====================================================
-        # PLACE iPHONE ORDER
-        # ====================================================
+            android_ram_display = st.selectbox(
+                "RAM",
+                show_options_with_none(ANDROID_RAM_OPTIONS),
+                key="android_ram",
+                on_change=sync_mobile_selectbox_to_cart,
+                args=(
+                    "android_ram",
+                    ANDROID_RAM_OPTIONS,
+                    "android_ram",
+                    "RAM",
+                    "Android"
+                )
+            )
+            android_ram = android_ram_display.split(" — ₹")[0]
 
-        if st.button(
-            "Place Order",
-            use_container_width=True
-        ):
+            android_storage_display = st.selectbox(
+                "Storage",
+                show_options_with_none(ANDROID_STORAGE_OPTIONS),
+                key="android_storage",
+                on_change=sync_mobile_selectbox_to_cart,
+                args=(
+                    "android_storage",
+                    ANDROID_STORAGE_OPTIONS,
+                    "android_storage",
+                    "Storage",
+                    "Android"
+                )
+            )
+            android_storage = android_storage_display.split(" — ₹")[0]
 
-            iphone_configuration_text = f"""
-        Display: {iphone_display}
-        Battery: {iphone_battery}
-        Camera: {iphone_camera}
-        RAM: {iphone_ram}
-        Storage: {iphone_storage}
-        Processor: {iphone_processor}
-        Connectivity: {iphone_connectivity}
-        Frame: {iphone_frame}
-        Color: {iphone_color}
-        """
+            android_processor_display = st.selectbox(
+                "Processor",
+                show_options_with_none(ANDROID_PROCESSOR_OPTIONS),
+                key="android_processor",
+                on_change=sync_mobile_selectbox_to_cart,
+                args=(
+                    "android_processor",
+                    ANDROID_PROCESSOR_OPTIONS,
+                    "android_processor",
+                    "Processor",
+                    "Android"
+                )
+            )
+            android_processor = android_processor_display.split(" — ₹")[0]
 
-            iphone_accessories_text = ", ".join(
-                iphone_accessory_names
+            android_connectivity_display = st.selectbox(
+                "Connectivity",
+                show_options_with_none(ANDROID_CONNECTIVITY_OPTIONS),
+                key="android_connectivity",
+                on_change=sync_mobile_selectbox_to_cart,
+                args=(
+                    "android_connectivity",
+                    ANDROID_CONNECTIVITY_OPTIONS,
+                    "android_connectivity",
+                    "Connectivity",
+                    "Android"
+                )
+            )
+            android_connectivity = android_connectivity_display.split(" — ₹")[0]
+
+            android_build_display = st.selectbox(
+                "Build Material",
+                show_options_with_none(ANDROID_BUILD_OPTIONS),
+                key="android_build",
+                on_change=sync_mobile_selectbox_to_cart,
+                args=(
+                    "android_build",
+                    ANDROID_BUILD_OPTIONS,
+                    "android_build",
+                    "Build Material",
+                    "Android"
+                )
+            )
+            android_build = android_build_display.split(" — ₹")[0]
+
+            android_color_display = st.selectbox(
+                "Color",
+                show_options_with_none(ANDROID_COLOR_OPTIONS),
+                key="android_color",
+                on_change=sync_mobile_selectbox_to_cart,
+                args=(
+                    "android_color",
+                    ANDROID_COLOR_OPTIONS,
+                    "android_color",
+                    "Color",
+                    "Android"
+                )
+            )
+            android_color = android_color_display.split(" — ₹")[0]
+
+            android_configuration = {
+                "Display": selected_price(ANDROID_DISPLAY_OPTIONS, android_display),
+                "Battery": selected_price(ANDROID_BATTERY_OPTIONS, android_battery),
+                "Camera": selected_price(ANDROID_CAMERA_OPTIONS, android_camera),
+                "RAM": selected_price(ANDROID_RAM_OPTIONS, android_ram),
+                "Storage": selected_price(ANDROID_STORAGE_OPTIONS, android_storage),
+                "Processor": selected_price(ANDROID_PROCESSOR_OPTIONS, android_processor),
+                "Connectivity": selected_price(ANDROID_CONNECTIVITY_OPTIONS, android_connectivity),
+                "Build Material": selected_price(ANDROID_BUILD_OPTIONS, android_build),
+                "Color": selected_price(ANDROID_COLOR_OPTIONS, android_color)
+            }
+
+            st.divider()
+            st.subheader("Accessories")
+            st.write("Select any accessories you want to add.")
+
+            selected_android_accessories = st.multiselect(
+                "Choose Accessories",
+                show_options(ANDROID_ACCESSORY_OPTIONS),
+                key="android_accessories",
+                on_change=sync_mobile_accessories,
+                args=(
+                    "android_accessories",
+                    ANDROID_ACCESSORY_OPTIONS,
+                    "Android"
+                )
             )
 
-            order_date = datetime.now().strftime(
-                "%Y-%m-%d %H:%M:%S"
+            android_accessory_names = [
+                item.split(" — ₹")[0]
+                for item in selected_android_accessories
+            ]
+
+            android_accessory_price = sum(
+                ANDROID_ACCESSORY_OPTIONS[name]
+                for name in android_accessory_names
             )
 
-            create_order(
-                user_id=user_id,
-                device_type="Mobile",
-                operating_system="iOS",
-                configuration=iphone_configuration_text,
-                accessories=iphone_accessories_text,
-                subtotal=iphone_price,
-                discount=0,
-                final_price=iphone_price,
-                order_date=order_date
-            )
+            android_price = sum(android_configuration.values()) + android_accessory_price
 
-            st.success(
-                "Your iPhone order has been placed successfully."
-            )
+            st.divider()
+            st.subheader("Price Summary")
 
+            for label, price in android_configuration.items():
+                st.write(f"**{label}:** ₹{price:,.2f}")
 
+            st.write(f"**Accessories:** ₹{android_accessory_price:,.2f}")
+
+            st.divider()
+            st.metric("Final Price", f"₹{android_price:,.2f}")
+
+            st.divider()
+            st.subheader("Order Summary")
+            st.write("**Device:** Android")
+            st.write(f"**Display:** {android_display}")
+            st.write(f"**Battery:** {android_battery}")
+            st.write(f"**Camera:** {android_camera}")
+            st.write(f"**RAM:** {android_ram}")
+            st.write(f"**Storage:** {android_storage}")
+            st.write(f"**Processor:** {android_processor}")
+            st.write(f"**Connectivity:** {android_connectivity}")
+            st.write(f"**Build Material:** {android_build}")
+            st.write(f"**Color:** {android_color}")
+            st.write("**Accessories:**")
+            if android_accessory_names:
+                for accessory in android_accessory_names:
+                    st.write(f"- {accessory}")
+            else:
+                st.write("No accessories selected.")
+            st.write(f"**Current Selection Price: ₹{android_price:,.2f}**")
 
     # ========================================================
-    # ANDROID
+    # RIGHT SIDE — MOBILE CART
     # ========================================================
 
-    else:
+    with mobile_right:
 
-        st.subheader("Custom Android")
+        with st.container(border=True):
 
-        st.write(
-            "Build your Android smartphone by selecting individual features."
-        )
+            st.subheader("🛒 Your Cart")
 
-        st.divider()
+            if not st.session_state.cart:
 
-        # ----------------------------------------------------
-        # DISPLAY
-        # ----------------------------------------------------
+                st.info("Your cart is empty.")
 
-        android_display_display = st.selectbox(
-            "Display",
-            show_options(
-                ANDROID_DISPLAY_OPTIONS
-            )
-        )
+            else:
 
-        android_display = android_display_display.split(
-            " — ₹"
-        )[0]
+                for index, item in enumerate(st.session_state.cart):
 
+                    item_col1, item_col2 = st.columns(
+                        [4, 1],
+                        vertical_alignment="center"
+                    )
 
-        # ----------------------------------------------------
-        # BATTERY
-        # ----------------------------------------------------
+                    with item_col1:
+                        st.markdown(
+                            f"**{item['name']}**"
+                        )
+                        st.caption(
+                            f"₹{item['price']:,.2f}"
+                        )
 
-        android_battery_display = st.selectbox(
-            "Battery Capacity",
-            show_options(
-                ANDROID_BATTERY_OPTIONS
-            )
-        )
+                    with item_col2:
+                        if st.button(
+                            "✕",
+                            key=f"mobile_remove_cart_{index}",
+                            help=f"Remove {item['name']}",
+                            use_container_width=True
+                        ):
+                            remove_from_cart(index)
+                            st.rerun()
 
-        android_battery = android_battery_display.split(
-            " — ₹"
-        )[0]
+                    st.divider()
 
-
-        # ----------------------------------------------------
-        # CAMERA
-        # ----------------------------------------------------
-
-        android_camera_display = st.selectbox(
-            "Camera",
-            show_options(
-                ANDROID_CAMERA_OPTIONS
-            )
-        )
-
-        android_camera = android_camera_display.split(
-            " — ₹"
-        )[0]
-
-
-        # ----------------------------------------------------
-        # RAM
-        # ----------------------------------------------------
-
-        android_ram_display = st.selectbox(
-            "RAM",
-            show_options(
-                ANDROID_RAM_OPTIONS
-            )
-        )
-
-        android_ram = android_ram_display.split(
-            " — ₹"
-        )[0]
-
-
-        # ----------------------------------------------------
-        # STORAGE
-        # ----------------------------------------------------
-
-        android_storage_display = st.selectbox(
-            "Storage",
-            show_options(
-                ANDROID_STORAGE_OPTIONS
-            )
-        )
-
-        android_storage = android_storage_display.split(
-            " — ₹"
-        )[0]
-
-
-        # ----------------------------------------------------
-        # PROCESSOR
-        # ----------------------------------------------------
-
-        android_processor_display = st.selectbox(
-            "Processor",
-            show_options(
-                ANDROID_PROCESSOR_OPTIONS
-            )
-        )
-
-        android_processor = android_processor_display.split(
-            " — ₹"
-        )[0]
-
-
-        # ----------------------------------------------------
-        # CONNECTIVITY
-        # ----------------------------------------------------
-
-        android_connectivity_display = st.selectbox(
-            "Connectivity",
-            show_options(
-                ANDROID_CONNECTIVITY_OPTIONS
-            )
-        )
-
-        android_connectivity = android_connectivity_display.split(
-            " — ₹"
-        )[0]
-
-
-        # ----------------------------------------------------
-        # BUILD MATERIAL
-        # ----------------------------------------------------
-
-        android_build_display = st.selectbox(
-            "Build Material",
-            show_options(
-                ANDROID_BUILD_OPTIONS
-            )
-        )
-
-        android_build = android_build_display.split(
-            " — ₹"
-        )[0]
-
-
-        # ----------------------------------------------------
-        # COLOR
-        # ----------------------------------------------------
-
-        android_color_display = st.selectbox(
-            "Color",
-            show_options(
-                ANDROID_COLOR_OPTIONS
-            )
-        )
-
-        android_color = android_color_display.split(
-            " — ₹"
-        )[0]
-
-
-        # ====================================================
-        # PRICE CALCULATION
-        # ====================================================
-
-        android_configuration = {
-
-            "Display":
-                ANDROID_DISPLAY_OPTIONS[
-                    android_display
-                ],
-
-            "Battery":
-                ANDROID_BATTERY_OPTIONS[
-                    android_battery
-                ],
-
-            "Camera":
-                ANDROID_CAMERA_OPTIONS[
-                    android_camera
-                ],
-
-            "RAM":
-                ANDROID_RAM_OPTIONS[
-                    android_ram
-                ],
-
-            "Storage":
-                ANDROID_STORAGE_OPTIONS[
-                    android_storage
-                ],
-
-            "Processor":
-                ANDROID_PROCESSOR_OPTIONS[
-                    android_processor
-                ],
-
-            "Connectivity":
-                ANDROID_CONNECTIVITY_OPTIONS[
-                    android_connectivity
-                ],
-
-            "Build":
-                ANDROID_BUILD_OPTIONS[
-                    android_build
-                ],
-
-            "Color":
-                ANDROID_COLOR_OPTIONS[
-                    android_color
-                ]
-        }
-
-
-        android_price = sum(
-            android_configuration.values()
-        )
-
-
-        # ====================================================
-        # ACCESSORIES
-        # ====================================================
-
-        st.divider()
-
-        st.subheader("Accessories")
-
-        st.write(
-            "Select any accessories you want to add."
-        )
-
-        selected_android_accessories = st.multiselect(
-            "Choose Accessories",
-            show_options(
-                ANDROID_ACCESSORY_OPTIONS
-            )
-        )
-
-        android_accessory_names = [
-            item.split(" — ₹")[0]
-            for item in selected_android_accessories
-        ]
-
-        android_accessory_price = 0
-
-        for accessory in android_accessory_names:
-        
-            android_accessory_price += (
-                ANDROID_ACCESSORY_OPTIONS[accessory]
-            )
-
-
-        # ====================================================
-        # FINAL PRICE
-        # ====================================================
-
-        android_price = (
-            android_price
-            + android_accessory_price
-        )
-
-
-
-        # ====================================================
-        # PRICE SUMMARY
-        # ====================================================
-
-        st.divider()
-
-        st.subheader("Price Summary")
-
-        st.write(
-            f"**Display:** "
-            f"₹{ANDROID_DISPLAY_OPTIONS[android_display]:,.2f}"
-        )
-
-        st.write(
-            f"**Battery:** "
-            f"₹{ANDROID_BATTERY_OPTIONS[android_battery]:,.2f}"
-        )
-
-        st.write(
-            f"**Camera:** "
-            f"₹{ANDROID_CAMERA_OPTIONS[android_camera]:,.2f}"
-        )
-
-        st.write(
-            f"**RAM:** "
-            f"₹{ANDROID_RAM_OPTIONS[android_ram]:,.2f}"
-        )
-
-        st.write(
-            f"**Storage:** "
-            f"₹{ANDROID_STORAGE_OPTIONS[android_storage]:,.2f}"
-        )
-
-        st.write(
-            f"**Processor:** "
-            f"₹{ANDROID_PROCESSOR_OPTIONS[android_processor]:,.2f}"
-        )
-
-        st.write(
-            f"**Connectivity:** "
-            f"₹{ANDROID_CONNECTIVITY_OPTIONS[android_connectivity]:,.2f}"
-        )
-
-        st.write(
-            f"**Build Material:** "
-            f"₹{ANDROID_BUILD_OPTIONS[android_build]:,.2f}"
-        )
-
-        st.write(
-            f"**Color:** "
-            f"₹{ANDROID_COLOR_OPTIONS[android_color]:,.2f}"
-        )
-
-        st.divider()
-
-        st.metric(
-            "Final Price",
-            f"₹{android_price:,.2f}"
-        )
-
-        st.write(
-            f"**Accessories:** "
-            f"₹{android_accessory_price:,.2f}"
-        )
-
-
-        # ====================================================
-        # ANDROID ORDER SUMMARY
-        # ====================================================
-
-        st.divider()
-
-        st.subheader("Order Summary")
-
-        st.write("**Device:** Android")
-
-        st.write(
-            f"**Display:** {android_display}"
-        )
-
-        st.write(
-            f"**Battery:** {android_battery}"
-        )
-
-        st.write(
-            f"**Camera:** {android_camera}"
-        )
-
-        st.write(
-            f"**RAM:** {android_ram}"
-        )
-
-        st.write(
-            f"**Storage:** {android_storage}"
-        )
-
-        st.write(
-            f"**Processor:** {android_processor}"
-        )
-
-        st.write(
-            f"**Connectivity:** {android_connectivity}"
-        )
-
-        st.write(
-            f"**Build Material:** {android_build}"
-        )
-
-        st.write(
-            f"**Color:** {android_color}"
-        )
-
-        st.write("**Accessories:**")
-
-        if android_accessory_names:
-        
-            for accessory in android_accessory_names:
-            
                 st.write(
-                    f"- {accessory}"
+                    f"**Items: {len(st.session_state.cart)}**"
                 )
 
-        else:
-        
-            st.write(
-                "No accessories selected."
-            )
+                mobile_cart_total = get_cart_total()
 
-        st.write("")
+                st.markdown(
+                    f"### Total: ₹{mobile_cart_total:,.2f}"
+                )
 
-        st.write(
-            f"**Final Price: ₹{android_price:,.2f}**"
-        )
+                mobile_cart_os = st.session_state.get(
+                    "cart_operating_system",
+                    "iOS" if mobile_type == "iPhone" else "Android"
+                )
 
+                st.caption(
+                    f"Platform: Mobile | OS: {mobile_cart_os}"
+                )
 
+                if st.button(
+                    "Place Order",
+                    key="mobile_cart_place_order",
+                    use_container_width=True,
+                    type="primary"
+                ):
 
-        # ====================================================
-        # PLACE ANDROID ORDER
-        # ====================================================
+                    if not st.session_state.cart:
 
-        if st.button(
-            "Place Order",
-            use_container_width=True
-        ):
+                        st.warning(
+                            "Select at least one item before placing the order."
+                        )
 
-            android_configuration_text = f"""
-        Display: {android_display}
-        Battery: {android_battery}
-        Camera: {android_camera}
-        RAM: {android_ram}
-        Storage: {android_storage}
-        Processor: {android_processor}
-        Connectivity: {android_connectivity}
-        Build Material: {android_build}
-        Color: {android_color}
-        """
+                    else:
 
-            android_accessories_text = ", ".join(
-                android_accessory_names
-            )
+                        configuration_items = []
+                        accessory_items = []
 
-            order_date = datetime.now().strftime(
-                "%Y-%m-%d %H:%M:%S"
-            )
+                        for item in st.session_state.cart:
 
-            create_order(
-                user_id=user_id,
-                device_type="Mobile",
-                operating_system="Android",
-                configuration=android_configuration_text,
-                accessories=android_accessories_text,
-                subtotal=android_price,
-                discount=0,
-                final_price=android_price,
-                order_date=order_date
-            )
+                            if item.get("category", "").startswith(
+                                "mobile_accessory:"
+                            ):
+                                accessory_items.append(
+                                    item["name"].replace(
+                                        "Accessory - ",
+                                        ""
+                                    )
+                                )
+                            else:
+                                configuration_items.append(
+                                    item["name"]
+                                )
 
-            st.success(
-                "Your Android order has been placed successfully."
-            )
+                        configuration_text = "\n".join(
+                            configuration_items
+                        )
 
+                        accessories_text = ", ".join(
+                            accessory_items
+                        )
+
+                        mobile_cart_total = get_cart_total()
+
+                        order_date = datetime.now().strftime(
+                            "%Y-%m-%d %H:%M:%S"
+                        )
+
+                        create_order(
+                            user_id=user_id,
+                            device_type="Mobile",
+                            operating_system=mobile_cart_os,
+                            configuration=configuration_text,
+                            accessories=accessories_text,
+                            subtotal=mobile_cart_total,
+                            discount=0,
+                            final_price=mobile_cart_total,
+                            order_date=order_date
+                        )
+
+                        st.success(
+                            "Your mobile order has been placed successfully."
+                        )
+
+                        clear_cart()
+                        st.session_state.cart_device_type = "Mobile"
+                        st.rerun()
+
+                if st.button(
+                    "Clear Cart",
+                    key="mobile_clear_cart_button",
+                    use_container_width=True
+                ):
+
+                    clear_cart()
+                    st.session_state.cart_device_type = "Mobile"
+                    st.rerun()
 
 
 # ============================================================
