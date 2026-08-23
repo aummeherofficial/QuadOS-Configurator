@@ -77,6 +77,8 @@ def create_tables():
 
             order_date TEXT,
 
+            status TEXT DEFAULT 'Placed',
+
             FOREIGN KEY (user_id)
             REFERENCES users(id)
         )
@@ -179,6 +181,34 @@ def create_tables():
         """, (
             "admin@quados.com",
         ))
+
+    # ========================================================
+    # ORDER TABLE MIGRATION
+    # ========================================================
+
+    cursor.execute("PRAGMA table_info(orders)")
+
+    order_columns = cursor.fetchall()
+
+    order_column_names = [
+        column[1]
+        for column in order_columns
+    ]
+
+    if "status" not in order_column_names:
+
+        cursor.execute("""
+            ALTER TABLE orders
+            ADD COLUMN status TEXT DEFAULT 'Placed'
+        """)
+
+    # Existing orders are treated as placed orders.
+    cursor.execute("""
+        UPDATE orders
+        SET status = 'Placed'
+        WHERE status IS NULL
+           OR TRIM(status) = ''
+    """)
 
     # ========================================================
     # COMMIT
@@ -410,7 +440,8 @@ def get_user_orders(user_id):
             subtotal,
             discount,
             final_price,
-            order_date
+            order_date,
+            status
         FROM orders
         WHERE user_id = ?
         ORDER BY id DESC
@@ -445,7 +476,8 @@ def get_all_orders():
             subtotal,
             discount,
             final_price,
-            order_date
+            order_date,
+            status
         FROM orders
         ORDER BY id DESC
     """)
@@ -604,7 +636,7 @@ def get_all_users():
 
 # ============================================================
 # PASSWORD RESET - VERIFY USER
-# ============================================================\===========
+# ============================================================
 
 def verify_password_reset_user(email, phone):
     """Verify a user for the Forgot Password flow using email + phone."""
@@ -723,7 +755,8 @@ def create_order(
     subtotal,
     discount,
     final_price,
-    order_date
+    order_date,
+    status="Placed"
 ):
 
     connection = get_connection()
@@ -740,9 +773,10 @@ def create_order(
             subtotal,
             discount,
             final_price,
-            order_date
+            order_date,
+            status
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         user_id,
         device_type,
@@ -752,12 +786,42 @@ def create_order(
         subtotal,
         discount,
         final_price,
-        order_date
+        order_date,
+        status
     ))
 
     connection.commit()
 
     connection.close()
+
+
+# ============================================================
+# CANCEL USER ORDER
+# ============================================================
+
+def cancel_order(user_id, order_id):
+
+    connection = get_connection()
+    cursor = connection.cursor()
+
+    cursor.execute("""
+        UPDATE orders
+        SET status = 'Cancelled'
+        WHERE id = ?
+        AND user_id = ?
+        AND (status IS NULL OR status != 'Cancelled')
+    """, (
+        order_id,
+        user_id
+    ))
+
+    connection.commit()
+
+    changed = cursor.rowcount > 0
+
+    connection.close()
+
+    return changed
 
 
 # ============================================================
@@ -780,7 +844,8 @@ def get_all_orders_with_users():
             orders.accessories,
             orders.subtotal,
             orders.final_price,
-            orders.order_date
+            orders.order_date,
+            orders.status
         FROM orders
         JOIN users
         ON orders.user_id = users.id

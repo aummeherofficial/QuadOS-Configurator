@@ -27,6 +27,7 @@ from database import (
     delete_order,
     get_user_order_count,
     create_order,
+    cancel_order,
     get_user_orders,
     get_all_orders_with_users,
     verify_password_reset_user,
@@ -800,6 +801,19 @@ user_role = current_user[6]
 
 
 # ============================================================
+# ORDER SUCCESS MESSAGE
+# ============================================================
+
+order_success_message = st.session_state.pop(
+    "order_success_message",
+    None
+)
+
+if order_success_message:
+    st.success(order_success_message)
+
+
+# ============================================================
 # SIDEBAR
 # ============================================================
 
@@ -1169,6 +1183,7 @@ elif page == "All Orders":
             subtotal = order[7]
             final_price = order[8]
             order_date = order[9]
+            status = order[10]
 
             order_rows.append({
                 "Order ID": order_id,
@@ -1188,7 +1203,8 @@ elif page == "All Orders":
                 ),
                 "Subtotal": f"₹{float(subtotal):,.2f}",
                 "Final Price": f"₹{float(final_price):,.2f}",
-                "Order Date": str(order_date)
+                "Order Date": str(order_date),
+                "Status": status
             })
 
         orders_df = pd.DataFrame(order_rows)
@@ -1288,6 +1304,7 @@ elif page == "Manage Orders":
         subtotal = order[7]
         final_price = order[8]
         order_date = order[9]
+        status = order[10] or "Placed"
 
 
         st.write(
@@ -1333,6 +1350,10 @@ elif page == "Manage Orders":
             st.write(
                 f"**Order Date:** "
                 f"{order_date}"
+            )
+
+            st.write(
+                f"**Status:** {status}"
             )
 
             st.write(
@@ -2935,7 +2956,7 @@ elif page == "PC Configurator":
                         order_date=order_date
                     )
 
-                    st.success(
+                    st.session_state.order_success_message = (
                         "Your order has been placed successfully."
                     )
 
@@ -3562,7 +3583,7 @@ elif page == "Mobile Configurator":
                             order_date=order_date
                         )
 
-                        st.success(
+                        st.session_state.order_success_message = (
                             "Your mobile order has been placed successfully."
                         )
 
@@ -3590,7 +3611,7 @@ elif page == "My Orders":
     st.title("My Orders")
 
     st.write(
-        "View all your orders in a simple tabular format."
+        "View your orders and cancel an order when needed."
     )
 
     st.divider()
@@ -3611,6 +3632,7 @@ elif page == "My Orders":
             subtotal = order[6]
             final_price = order[8]
             order_date = order[9]
+            status = order[10] or "Placed"
 
             order_rows.append({
                 "Order ID": order_id,
@@ -3628,7 +3650,8 @@ elif page == "My Orders":
                 ),
                 "Subtotal": f"₹{float(subtotal):,.2f}",
                 "Final Price": f"₹{float(final_price):,.2f}",
-                "Order Date": str(order_date)
+                "Order Date": str(order_date),
+                "Status": status
             })
 
         orders_df = pd.DataFrame(order_rows)
@@ -3643,6 +3666,66 @@ elif page == "My Orders":
         st.caption(
             f"Total orders displayed: {len(orders_df)}"
         )
+
+        # ====================================================
+        # CANCEL ORDER
+        # ====================================================
+
+        st.divider()
+        st.subheader("Cancel an Order")
+
+        cancellable_orders = [
+            order
+            for order in orders
+            if (order[10] or "Placed") != "Cancelled"
+        ]
+
+        if cancellable_orders:
+
+            cancel_options = {
+                f"Order #{order[0]} | {order[2]} | {order[3]} | ₹{float(order[8]):,.2f}": order[0]
+                for order in cancellable_orders
+            }
+
+            selected_cancel_label = st.selectbox(
+                "Select an order to cancel",
+                list(cancel_options.keys()),
+                key="user_cancel_order_select"
+            )
+
+            selected_cancel_order_id = cancel_options[
+                selected_cancel_label
+            ]
+
+            if st.button(
+                "Cancel Order",
+                key="user_cancel_order_button",
+                type="primary",
+                use_container_width=True
+            ):
+
+                cancelled = cancel_order(
+                    user_id,
+                    selected_cancel_order_id
+                )
+
+                if cancelled:
+
+                    st.success(
+                        f"Order #{selected_cancel_order_id} has been cancelled successfully."
+                    )
+
+                    st.rerun()
+
+                else:
+
+                    st.error(
+                        "The order could not be cancelled. It may already be cancelled or does not belong to your account."
+                    )
+
+        else:
+
+            st.info("All your orders have already been cancelled.")
 
     else:
 
