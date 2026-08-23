@@ -80,6 +80,13 @@ from config import (
 
 from pricing import calculate_pc_price
 
+st.set_page_config(
+    page_title="QuadOS.",
+    page_icon="assets/quados_favicon.ico",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
 
 # ============================================================
 # DISPLAY OPTION WITH PRICE
@@ -525,8 +532,7 @@ def validate_email(email):
         return False, "Email is required."
     if len(email) > 254:
         return False, "Email is too long."
-    if not EMAIL_PATTERN.fullmatch(email):
-        return False, "Please enter a valid email address."
+ 
     return True, ""
 
 
@@ -585,9 +591,14 @@ if not st.session_state.logged_in:
     st.title("QuadOS")
     st.subheader("Secure Login")
 
+    # ========================================================
+    # CREATE TABS
+    # ========================================================
+
     login_tab, register_tab = st.tabs(
         ["Login", "Create Account"]
     )
+
 
     # ========================================================
     # LOGIN
@@ -595,57 +606,90 @@ if not st.session_state.logged_in:
 
     with login_tab:
 
-        st.caption("Use your registered email and password to continue.")
-
-        login_email = st.text_input(
-            "Email",
-            key="login_email",
-            placeholder="name@example.com"
+        st.write(
+            "Use your registered email and password to continue."
         )
 
-        show_login_password = st.checkbox(
+        email = st.text_input(
+            "Email",
+            key="login_email"
+        )
+
+        show_password = st.checkbox(
             "Show password",
             key="show_login_password"
         )
 
-        login_password = st.text_input(
+        password = st.text_input(
             "Password",
-            type="default" if show_login_password else "password",
+            type="default" if show_password else "password",
             key="login_password"
         )
 
         if st.button(
             "Login",
-            use_container_width=True,
-            type="primary"
+            key="login_button",
+            use_container_width=True
         ):
 
-            valid_email, email_message = validate_email(login_email)
+            # ------------------------------------------------
+            # CLEAN INPUT
+            # ------------------------------------------------
 
-            if not valid_email:
-                st.warning(email_message)
+            email = email.strip()
+            password = password.strip()
 
-            elif not login_password:
-                st.warning("Password is required.")
+            # ------------------------------------------------
+            # EMPTY EMAIL
+            # ------------------------------------------------
+
+            if email == "":
+
+                st.warning(
+                    "Please enter your email."
+                )
+
+            # ------------------------------------------------
+            # EMPTY PASSWORD
+            # ------------------------------------------------
+
+            elif password == "":
+
+                st.warning(
+                    "Please enter your password."
+                )
+
+            # ------------------------------------------------
+            # LOGIN
+            # ------------------------------------------------
 
             else:
-                normalized_login_email = normalize_email(login_email)
 
                 user = login_user(
-                    normalized_login_email,
-                    login_password
+                    email,
+                    password
                 )
 
                 if user:
+
+
+
                     st.session_state.logged_in = True
+
                     st.session_state.user = user
-                    st.session_state.login_failed_attempts = 0
+
                     st.rerun()
 
                 else:
+
+                    # -------------------------------
+                    # LOGIN FAILED
+                    # -------------------------------
+
                     st.error(
-                        "Invalid email or password. Please check your credentials and try again."
+                        "Invalid email or password."
                     )
+
 
     # ========================================================
     # CREATE ACCOUNT
@@ -653,94 +697,188 @@ if not st.session_state.logged_in:
 
     with register_tab:
 
-        st.subheader("Create User Account")
-        st.caption(
-            "Password must be at least 8 characters and include an uppercase letter, lowercase letter and number."
+        st.write(
+            "Create a new QuadOS account."
         )
 
-        register_name = st.text_input(
+        name = st.text_input(
             "Full Name",
-            key="register_name",
-            placeholder="Your full name"
+            key="register_name"
         )
 
-        register_email = st.text_input(
+        email = st.text_input(
             "Email",
-            key="register_email",
-            placeholder="name@example.com"
+            key="register_email"
         )
 
-        register_password = st.text_input(
+        password = st.text_input(
             "Password",
             type="password",
-            key="register_password",
-            placeholder="Create a strong password"
+            key="register_password"
         )
 
-        register_confirm_password = st.text_input(
+        confirm_password = st.text_input(
             "Confirm Password",
             type="password",
-            key="register_confirm_password",
-            placeholder="Re-enter your password"
+            key="register_confirm_password"
         )
 
-        register_phone = st.text_input(
+        phone = st.text_input(
             "Phone",
-            key="register_phone",
-            placeholder="Optional"
+            key="register_phone"
         )
 
-        register_address = st.text_area(
+        address = st.text_area(
             "Address",
-            key="register_address",
-            placeholder="Optional"
+            key="register_address"
         )
+
 
         if st.button(
             "Create Account",
-            use_container_width=True,
-            type="primary"
+            key="create_account_button",
+            use_container_width=True
         ):
 
-            valid, validation_message = validate_registration(
-                register_name,
-                register_email,
-                register_password,
-                register_confirm_password,
-                register_phone,
-                register_address
-            )
+            # ------------------------------------------------
+            # CLEAN INPUT
+            # ------------------------------------------------
 
-            if not valid:
-                st.warning(validation_message)
+            name = name.strip()
+            email = email.strip()
+            phone = phone.strip()
+            address = address.strip()
+
+
+            # ------------------------------------------------
+            # REQUIRED FIELDS
+            # ------------------------------------------------
+
+            if name == "":
+
+                st.warning(
+                    "Please enter your full name."
+                )
+
+            elif email == "":
+
+                st.warning(
+                    "Please enter your email."
+                )
+
+            elif password == "":
+
+                st.warning(
+                    "Please enter a password."
+                )
+
+            elif confirm_password == "":
+
+                st.warning(
+                    "Please confirm your password."
+                )
+
+
+            # ------------------------------------------------
+            # PASSWORD MATCH
+            # ------------------------------------------------
+
+            elif password != confirm_password:
+
+                st.error(
+                    "Passwords do not match."
+                )
+
+
+            # ------------------------------------------------
+            # PASSWORD LENGTH
+            # ------------------------------------------------
+
+            elif len(password) < 8:
+
+                st.error(
+                    "Password must contain at least 8 characters."
+                )
+
+
+            # ------------------------------------------------
+            # UPPERCASE
+            # ------------------------------------------------
+
+            elif not any(
+                character.isupper()
+                for character in password
+            ):
+
+                st.error(
+                    "Password must contain at least one uppercase letter."
+                )
+
+
+            # ------------------------------------------------
+            # LOWERCASE
+            # ------------------------------------------------
+
+            elif not any(
+                character.islower()
+                for character in password
+            ):
+
+                st.error(
+                    "Password must contain at least one lowercase letter."
+                )
+
+
+            # ------------------------------------------------
+            # NUMBER
+            # ------------------------------------------------
+
+            elif not any(
+                character.isdigit()
+                for character in password
+            ):
+
+                st.error(
+                    "Password must contain at least one number."
+                )
+
+
+            # ------------------------------------------------
+            # CREATE ACCOUNT
+            # ------------------------------------------------
 
             else:
-                clean_name = " ".join(
-                    register_name.strip().split()
-                )
-                clean_email = normalize_email(register_email)
-                clean_phone = register_phone.strip()
-                clean_address = register_address.strip()
 
                 success = create_user(
-                    clean_name,
-                    clean_email,
-                    register_password,
-                    clean_phone,
-                    clean_address
+                    name,
+                    email,
+                    password,
+                    phone,
+                    address
                 )
 
                 if success:
+
                     st.success(
-                        "Account created successfully. You can now login."
+                        "Account created successfully."
                     )
+
+                    st.info(
+                        "You can now login with your account."
+                    )
+
                 else:
+
                     st.error(
-                        "This email is already registered. Please use another email or login with the existing account."
+                        "This email is already registered."
                     )
+
+
+    # ========================================================
+    # STOP EXECUTION UNTIL LOGIN
+    # ========================================================
 
     st.stop()
-
 
 # ============================================================
 # GET CURRENT USER
@@ -751,7 +889,7 @@ current_user = st.session_state.user
 user_id = current_user[0]
 user_name = current_user[1]
 user_email = current_user[2]
-user_role = current_user[3]
+user_role = current_user[6]
 
 
 # ============================================================

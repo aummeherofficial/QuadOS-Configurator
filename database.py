@@ -88,8 +88,9 @@ def create_user(name, email, password, phone, address):
         connection.close()
 
 
+
 # ============================================================
-# LOGIN
+# LOGIN USER
 # ============================================================
 
 def login_user(email, password):
@@ -98,11 +99,12 @@ def login_user(email, password):
     cursor = connection.cursor()
 
     cursor.execute("""
-        SELECT id, name, email, role
+        SELECT *
         FROM users
-        WHERE email = ? AND password = ?
+        WHERE email = ?
+        AND password = ?
     """, (
-        email,
+        email.strip(),
         password
     ))
 
@@ -111,6 +113,8 @@ def login_user(email, password):
     connection.close()
 
     return user
+
+
 
 
 # ============================================================
