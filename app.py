@@ -1545,7 +1545,7 @@ elif page == "Home":
     st.markdown(
         """
         <div class="subtitle">
-            Build your own custom device with QuadOS
+            Build your own custom device with QuadOS Configurator
         </div>
         """,
         unsafe_allow_html=True
