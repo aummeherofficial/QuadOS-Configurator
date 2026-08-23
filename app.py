@@ -264,6 +264,185 @@ def go_to_page(page_name):
 
 
 # ============================================================
+# ORDER VALIDATION
+# ============================================================
+
+def validate_order_cart(cart, device_type, operating_system):
+    """
+    Validate that a device order contains enough core components
+    to represent a usable PC/mobile configuration.
+
+    Accessories are allowed to be ordered by themselves.
+    A single non-accessory component is not allowed.
+    """
+
+    if not cart:
+        return False, "Your cart is empty."
+
+    # Accessories are optional and may be ordered alone.
+    non_accessories = [
+        item for item in cart
+        if not str(item.get("category", "")).startswith(
+            ("accessory:", "mobile_accessory:")
+        )
+    ]
+
+    if not non_accessories:
+        return True, ""
+
+    selected_categories = {
+        item.get("category")
+        for item in non_accessories
+    }
+
+    # --------------------------------------------------------
+    # WINDOWS PC
+    # --------------------------------------------------------
+    if device_type == "PC" and operating_system == "Windows":
+
+        required = {
+            "cpu",
+            "motherboard",
+            "ram",
+            "storage",
+            "power_supply",
+            "cabinet"
+        }
+
+        missing = required - selected_categories
+
+        if missing:
+            labels = {
+                "cpu": "Processor",
+                "motherboard": "Motherboard",
+                "ram": "RAM",
+                "storage": "Storage",
+                "power_supply": "Power Supply",
+                "cabinet": "Cabinet"
+            }
+
+            missing_names = [
+                labels[item]
+                for item in required
+                if item in missing
+            ]
+
+            return (
+                False,
+                "A Windows PC order must contain the core components: "
+                + ", ".join(missing_names)
+                + ". You can add GPU, cooling, monitor, keyboard, mouse and accessories optionally."
+            )
+
+    # --------------------------------------------------------
+    # macOS
+    # --------------------------------------------------------
+    elif device_type == "PC" and operating_system == "macOS":
+
+        required = {
+            "processor",
+            "memory",
+            "storage",
+            "display"
+        }
+
+        missing = required - selected_categories
+
+        if missing:
+            labels = {
+                "processor": "Apple Processor",
+                "memory": "Memory",
+                "storage": "Storage",
+                "display": "Display"
+            }
+
+            missing_names = [
+                labels[item]
+                for item in required
+                if item in missing
+            ]
+
+            return (
+                False,
+                "A macOS order must contain the core components: "
+                + ", ".join(missing_names)
+                + ". Keyboard, mouse, graphics and accessories are optional."
+            )
+
+    # --------------------------------------------------------
+    # MOBILE
+    # --------------------------------------------------------
+    elif device_type == "Mobile":
+
+        if operating_system == "iOS":
+
+            required = {
+                "iphone_display",
+                "iphone_battery",
+                "iphone_ram",
+                "iphone_storage",
+                "iphone_processor",
+                "iphone_connectivity"
+            }
+
+            labels = {
+                "iphone_display": "Display",
+                "iphone_battery": "Battery",
+                "iphone_ram": "RAM",
+                "iphone_storage": "Storage",
+                "iphone_processor": "Processor",
+                "iphone_connectivity": "Connectivity"
+            }
+
+        else:
+
+            required = {
+                "android_display",
+                "android_battery",
+                "android_ram",
+                "android_storage",
+                "android_processor",
+                "android_connectivity"
+            }
+
+            labels = {
+                "android_display": "Display",
+                "android_battery": "Battery",
+                "android_ram": "RAM",
+                "android_storage": "Storage",
+                "android_processor": "Processor",
+                "android_connectivity": "Connectivity"
+            }
+
+        missing = required - selected_categories
+
+        if missing:
+            missing_names = [
+                labels[item]
+                for item in required
+                if item in missing
+            ]
+
+            return (
+                False,
+                "A smartphone order must contain the core components: "
+                + ", ".join(missing_names)
+                + ". Camera, build/frame, color and accessories are optional."
+            )
+
+    # --------------------------------------------------------
+    # SAFETY CHECK
+    # --------------------------------------------------------
+    if len(non_accessories) == 1:
+        return (
+            False,
+            "A single device component cannot be ordered by itself. Please build a complete device configuration. Accessories can be ordered separately."
+        )
+
+    return True, ""
+
+
+# ============================================================
 # CART FUNCTIONS
 # ============================================================
 
@@ -2492,64 +2671,6 @@ elif page == "PC Configurator":
             pc_price = calculate_pc_price(configuration)
             subtotal = pc_price + accessory_price
 
-            # =================================================
-            # PRICE SUMMARY
-            # =================================================
-
-            st.divider()
-
-            st.subheader("Price Summary")
-
-            price_col1, price_col2 = st.columns(2)
-
-            with price_col1:
-                st.write("**PC Components**")
-                st.write("**Accessories**")
-                st.write("**Final Price**")
-
-            with price_col2:
-                st.write(f"₹{pc_price:,.2f}")
-                st.write(f"₹{accessory_price:,.2f}")
-                st.write(f"₹{subtotal:,.2f}")
-
-            st.divider()
-
-            st.metric(
-                "Final Price",
-                f"₹{subtotal:,.2f}"
-            )
-
-            # =================================================
-            # ORDER SUMMARY
-            # =================================================
-
-            st.divider()
-
-            st.subheader("Order Summary")
-
-            st.write("**Platform:** Windows PC")
-            st.write(f"**Processor:** {cpu}")
-            st.write(f"**Motherboard:** {motherboard}")
-            st.write(f"**RAM:** {ram}")
-            st.write(f"**Graphics Card:** {gpu}")
-            st.write(f"**Storage:** {storage}")
-            st.write(f"**Power Supply:** {power_supply}")
-            st.write(f"**Cooling:** {cooling}")
-            st.write(f"**Cabinet:** {cabinet}")
-            st.write(f"**Monitor:** {monitor}")
-            st.write(f"**Keyboard:** {keyboard}")
-            st.write(f"**Mouse:** {mouse}")
-
-            st.write("**Accessories:**")
-
-            if accessory_names:
-                for accessory in accessory_names:
-                    st.write(f"- {accessory}")
-            else:
-                st.write("No accessories selected.")
-
-            st.write("")
-            st.write(f"**Final Price: ₹{subtotal:,.2f}**")
 
         # ====================================================
         # macOS CONFIGURATOR
@@ -2763,74 +2884,6 @@ elif page == "PC Configurator":
 
             mac_price = mac_component_price + mac_accessory_price
 
-            # =================================================
-            # PRICE SUMMARY
-            # =================================================
-
-            st.divider()
-
-            st.subheader("Price Summary")
-
-            st.write(
-                f"**Processor:** ₹{MACOS_CPU_OPTIONS.get(mac_cpu, 0):,.2f}"
-            )
-            st.write(
-                f"**Memory:** ₹{MACOS_RAM_OPTIONS.get(mac_ram, 0):,.2f}"
-            )
-            st.write(
-                f"**Storage:** ₹{MACOS_STORAGE_OPTIONS.get(mac_storage, 0):,.2f}"
-            )
-            st.write(
-                f"**Graphics:** ₹{MACOS_GPU_OPTIONS.get(mac_gpu, 0):,.2f}"
-            )
-            st.write(
-                f"**Display:** ₹{MACOS_DISPLAY_OPTIONS.get(mac_display, 0):,.2f}"
-            )
-            st.write(
-                f"**Keyboard:** ₹{MACOS_KEYBOARD_OPTIONS.get(mac_keyboard, 0):,.2f}"
-            )
-            st.write(
-                f"**Mouse / Trackpad:** "
-                f"₹{MACOS_MOUSE_OPTIONS.get(mac_mouse, 0):,.2f}"
-            )
-            st.write(
-                f"**Accessories:** ₹{mac_accessory_price:,.2f}"
-            )
-
-            st.divider()
-
-            st.metric(
-                "Final Price",
-                f"₹{mac_price:,.2f}"
-            )
-
-            # =================================================
-            # MACOS ORDER SUMMARY
-            # =================================================
-
-            st.divider()
-
-            st.subheader("Order Summary")
-
-            st.write("**Platform:** macOS")
-            st.write(f"**Processor:** {mac_cpu}")
-            st.write(f"**Memory:** {mac_ram}")
-            st.write(f"**Storage:** {mac_storage}")
-            st.write(f"**Graphics:** {mac_gpu}")
-            st.write(f"**Display:** {mac_display}")
-            st.write(f"**Keyboard:** {mac_keyboard}")
-            st.write(f"**Mouse / Trackpad:** {mac_mouse}")
-
-            st.write("**Accessories:**")
-
-            if mac_accessory_names:
-                for accessory in mac_accessory_names:
-                    st.write(f"- {accessory}")
-            else:
-                st.write("No accessories selected.")
-
-            st.write("")
-            st.write(f"**Final Price: ₹{mac_price:,.2f}**")
 
     # ========================================================
     # RIGHT SIDE — CART
@@ -2908,65 +2961,77 @@ elif page == "PC Configurator":
                     type="primary"
                 ):
 
-                    configuration_items = []
-                    accessory_items = []
+                    valid_order, validation_message = validate_order_cart(
+                        st.session_state.cart,
+                        "PC",
+                        cart_os
+                    )
 
-                    for item in st.session_state.cart:
+                    if not valid_order:
 
-                        if item["name"].startswith(
-                            "Accessory - "
-                        ):
+                        st.warning(validation_message)
 
-                            accessory_items.append(
-                                item["name"].replace(
-                                    "Accessory - ",
-                                    ""
+                    else:
+
+                        configuration_items = []
+                        accessory_items = []
+
+                        for item in st.session_state.cart:
+
+                            if item["name"].startswith(
+                                "Accessory - "
+                            ):
+
+                                accessory_items.append(
+                                    item["name"].replace(
+                                        "Accessory - ",
+                                        ""
+                                    )
                                 )
-                            )
 
-                        else:
+                            else:
 
-                            configuration_items.append(
-                                item["name"]
-                            )
+                                configuration_items.append(
+                                    item["name"]
+                                )
 
-                    configuration_text = "\n".join(
-                        configuration_items
-                    )
+                        configuration_text = "\n".join(
+                            configuration_items
+                        )
 
-                    accessories_text = ", ".join(
-                        accessory_items
-                    )
+                        accessories_text = ", ".join(
+                            accessory_items
+                        )
 
-                    cart_total = get_cart_total()
+                        cart_total = get_cart_total()
 
-                    order_date = datetime.now().strftime(
-                        "%Y-%m-%d %H:%M:%S"
-                    )
+                        order_date = datetime.now().strftime(
+                            "%Y-%m-%d %H:%M:%S"
+                        )
 
-                    create_order(
-                        user_id=user_id,
-                        device_type="PC",
-                        operating_system=cart_os,
-                        configuration=configuration_text,
-                        accessories=accessories_text,
-                        subtotal=cart_total,
-                        discount=0,
-                        final_price=cart_total,
-                        order_date=order_date
-                    )
+                        create_order(
+                            user_id=user_id,
+                            device_type="PC",
+                            operating_system=cart_os,
+                            configuration=configuration_text,
+                            accessories=accessories_text,
+                            subtotal=cart_total,
+                            discount=0,
+                            final_price=cart_total,
+                            order_date=order_date
+                        )
 
-                    st.session_state.order_success_message = (
-                        "Your order has been placed successfully."
-                    )
+                        st.session_state.order_success_message = (
+                            "Your order has been placed successfully."
+                        )
 
-                    clear_cart()
+                        clear_cart()
 
-                    st.session_state.cart_operating_system = (
-                        "Windows"
-                    )
+                        st.session_state.cart_operating_system = (
+                            "Windows"
+                        )
 
-                    st.rerun()
+                        st.rerun()
 
                 if st.button(
                     "Clear Cart",
@@ -3210,36 +3275,6 @@ elif page == "Mobile Configurator":
 
             iphone_price = sum(iphone_configuration.values()) + iphone_accessory_price
 
-            st.divider()
-            st.subheader("Price Summary")
-
-            for label, price in iphone_configuration.items():
-                st.write(f"**{label}:** ₹{price:,.2f}")
-
-            st.write(f"**Accessories:** ₹{iphone_accessory_price:,.2f}")
-
-            st.divider()
-            st.metric("Final Price", f"₹{iphone_price:,.2f}")
-
-            st.divider()
-            st.subheader("Order Summary")
-            st.write("**Device:** iPhone")
-            st.write(f"**Display:** {iphone_display}")
-            st.write(f"**Battery:** {iphone_battery}")
-            st.write(f"**Camera:** {iphone_camera}")
-            st.write(f"**RAM:** {iphone_ram}")
-            st.write(f"**Storage:** {iphone_storage}")
-            st.write(f"**Processor:** {iphone_processor}")
-            st.write(f"**Connectivity:** {iphone_connectivity}")
-            st.write(f"**Frame:** {iphone_frame}")
-            st.write(f"**Color:** {iphone_color}")
-            st.write("**Accessories:**")
-            if iphone_accessory_names:
-                for accessory in iphone_accessory_names:
-                    st.write(f"- {accessory}")
-            else:
-                st.write("No accessories selected.")
-            st.write(f"**Current Selection Price: ₹{iphone_price:,.2f}**")
 
         # ========================================================
         # ANDROID
@@ -3430,37 +3465,6 @@ elif page == "Mobile Configurator":
 
             android_price = sum(android_configuration.values()) + android_accessory_price
 
-            st.divider()
-            st.subheader("Price Summary")
-
-            for label, price in android_configuration.items():
-                st.write(f"**{label}:** ₹{price:,.2f}")
-
-            st.write(f"**Accessories:** ₹{android_accessory_price:,.2f}")
-
-            st.divider()
-            st.metric("Final Price", f"₹{android_price:,.2f}")
-
-            st.divider()
-            st.subheader("Order Summary")
-            st.write("**Device:** Android")
-            st.write(f"**Display:** {android_display}")
-            st.write(f"**Battery:** {android_battery}")
-            st.write(f"**Camera:** {android_camera}")
-            st.write(f"**RAM:** {android_ram}")
-            st.write(f"**Storage:** {android_storage}")
-            st.write(f"**Processor:** {android_processor}")
-            st.write(f"**Connectivity:** {android_connectivity}")
-            st.write(f"**Build Material:** {android_build}")
-            st.write(f"**Color:** {android_color}")
-            st.write("**Accessories:**")
-            if android_accessory_names:
-                for accessory in android_accessory_names:
-                    st.write(f"- {accessory}")
-            else:
-                st.write("No accessories selected.")
-            st.write(f"**Current Selection Price: ₹{android_price:,.2f}**")
-
     # ========================================================
     # RIGHT SIDE — MOBILE CART
     # ========================================================
@@ -3530,11 +3534,15 @@ elif page == "Mobile Configurator":
                     type="primary"
                 ):
 
-                    if not st.session_state.cart:
+                    valid_order, validation_message = validate_order_cart(
+                        st.session_state.cart,
+                        "Mobile",
+                        mobile_cart_os
+                    )
 
-                        st.warning(
-                            "Select at least one item before placing the order."
-                        )
+                    if not valid_order:
+
+                        st.warning(validation_message)
 
                     else:
 
