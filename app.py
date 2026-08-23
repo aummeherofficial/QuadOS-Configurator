@@ -84,6 +84,14 @@ from config import (
 
 from pricing import calculate_pc_price
 
+from query_database import (
+    create_query_table,
+    create_user_query,
+    get_all_queries,
+    update_query_status,
+    get_query_count
+)
+
 st.set_page_config(
     page_title="QuadOS.",
     page_icon="assets/quados_favicon.ico",
@@ -118,6 +126,7 @@ def show_options_with_none(options):
 
 create_tables()
 create_admin()
+create_query_table()
 
 
 # ============================================================
@@ -1021,6 +1030,7 @@ with st.sidebar:
                 "All Orders",
                 "Manage Orders",
                 "Analytics",
+                "Queries",
                 "About"
             ]
         )
@@ -3761,25 +3771,282 @@ elif page == "My Profile":
 
 
 # ============================================================
+# ADMIN QUERIES
+# ============================================================
+
+elif page == "Queries":
+
+    st.title("User Queries")
+    st.write("Questions and help requests submitted by QuadOS users.")
+
+    queries = get_all_queries()
+
+    if queries:
+        query_rows = []
+        for query in queries:
+            query_rows.append({
+                "Query ID": query[0],
+                "User ID": query[1] if query[1] is not None else "Guest",
+                "Name": query[2],
+                "Email": query[3],
+                "Subject": query[4],
+                "Question": query[5],
+                "Submitted At": query[6],
+                "Status": query[7]
+            })
+
+        queries_df = pd.DataFrame(query_rows)
+
+        st.dataframe(
+            queries_df,
+            use_container_width=True,
+            hide_index=True,
+            height=500
+        )
+
+        st.caption(f"Total queries: {len(queries_df)} | Pending: {get_query_count()}")
+
+        st.divider()
+        st.subheader("Update Query Status")
+
+        query_options = {
+            f"#{q[0]} — {q[4]} — {q[2]}": q[0]
+            for q in queries
+        }
+
+        selected_query_label = st.selectbox(
+            "Select Query",
+            list(query_options.keys()),
+            key="admin_query_select"
+        )
+
+        selected_query_id = query_options[selected_query_label]
+
+        new_status = st.selectbox(
+            "Status",
+            ["Pending", "In Progress", "Resolved"],
+            key="admin_query_status"
+        )
+
+        if st.button(
+            "Update Query",
+            key="admin_update_query_button",
+            type="primary",
+            use_container_width=True
+        ):
+            if update_query_status(selected_query_id, new_status):
+                st.success("Query status updated successfully.")
+                st.rerun()
+            else:
+                st.error("Unable to update the query.")
+
+    else:
+        st.info("No user queries have been submitted yet.")
+
+
+# ============================================================
 # ABOUT
 # ============================================================
 
 elif page == "About":
 
     st.title("About QuadOS")
-
     st.write(
-        """
-        QuadOS is a custom device configuration platform.
-
-        The main focus of QuadOS is custom PC building,
-        especially Windows and macOS systems.
-
-        iPhone and Android customization are included
-        as additional device categories.
-
-        QuadOS supports dynamic configuration,
-        pricing, accessories, discounts, orders
-        and analytics.
-        """
+        "QuadOS is a custom device configuration platform for building, "
+        "pricing and ordering personalized PCs and smartphones."
     )
+
+    st.divider()
+
+    # --------------------------------------------------------
+    # FEATURES
+    # --------------------------------------------------------
+    st.subheader("Features")
+
+    feature_col1, feature_col2 = st.columns(2)
+
+    with feature_col1:
+        st.markdown("""
+        **🖥️ PC Configurator**  
+        Build Windows and macOS PC combinations using configurable components.
+
+        **📱 Mobile Configurator**  
+        Configure iPhone and Android devices with supported hardware options.
+
+        **🛒 Smart Cart**  
+        Selected components and accessories are added directly to the cart.
+
+        **📦 Order Management**  
+        Users can view their orders and cancel eligible orders.
+        """)
+
+    with feature_col2:
+        st.markdown("""
+        **💰 Dynamic Pricing**  
+        Component prices are combined to calculate the final order value.
+
+        **🔐 Authentication**  
+        User registration, login and password reset are supported.
+
+        **📊 Analytics**  
+        Admins can view order, revenue and device analytics.
+
+        **👨‍💼 Admin Management**  
+        Admins can manage users, orders and submitted queries.
+        """)
+
+    st.divider()
+
+    # --------------------------------------------------------
+    # HOW IT WORKS
+    # --------------------------------------------------------
+    st.subheader("How QuadOS Works")
+    st.markdown("""
+    **1. Create an account or log in**  
+    **2. Choose PC or Mobile Configurator**  
+    **3. Select a complete device combination**  
+    **4. Add components/accessories to the cart**  
+    **5. Review the cart and place the order**  
+    **6. Track the order from My Orders**
+    """)
+
+    st.divider()
+
+    # --------------------------------------------------------
+    # SUPPORTED DEVICES
+    # --------------------------------------------------------
+    st.subheader("Supported Devices")
+    supported_col1, supported_col2 = st.columns(2)
+
+    with supported_col1:
+        st.markdown("""
+        ### 🖥️ PC
+        - Windows PC
+        - macOS PC
+        - CPU / Processor
+        - Motherboard
+        - RAM
+        - Storage
+        - GPU
+        - Cooling
+        - Cabinet
+        - Monitor and peripherals
+        """)
+
+    with supported_col2:
+        st.markdown("""
+        ### 📱 Mobile
+        - iPhone
+        - Android
+        - Display
+        - Battery
+        - RAM
+        - Storage
+        - Processor
+        - Camera
+        - Connectivity
+        - Build / Frame / Color
+        """)
+
+    st.divider()
+
+    # --------------------------------------------------------
+    # CONTACT
+    # --------------------------------------------------------
+    st.subheader("Contact & Support")
+    st.write("Need help with QuadOS? Use the query form below and your question will be sent to the QuadOS support database.")
+
+    contact_col1, contact_col2 = st.columns(2)
+
+    with contact_col1:
+        st.info("📧 Support: Submit a question through the Help & Query section below.")
+
+    with contact_col2:
+        st.info("🕐 Support Requests: Your submission is recorded with date and time for admin review.")
+
+    st.divider()
+
+    # --------------------------------------------------------
+    # FAQ / HELP
+    # --------------------------------------------------------
+    st.subheader("Help & Frequently Asked Questions")
+
+    with st.expander("Can I order only one PC component?"):
+        st.write("No. A PC order must contain the required combination of components. Accessories can be ordered separately.")
+
+    with st.expander("Can I order only an accessory?"):
+        st.write("Yes. Accessory-only orders are allowed.")
+
+    with st.expander("Can I cancel my order?"):
+        st.write("Yes. Go to My Orders and select an eligible order to cancel it.")
+
+    with st.expander("Where can I see my orders?"):
+        st.write("Open My Orders from the user navigation menu.")
+
+    with st.expander("What happens after I submit a question?"):
+        st.write("Your question is stored in the separate QuadOS queries database and becomes visible to the admin in the Queries section.")
+
+    st.divider()
+
+    # --------------------------------------------------------
+    # ASK A QUESTION
+    # --------------------------------------------------------
+    st.subheader("Ask a Question / Send a Help Query")
+    st.write("Submit your question below. It will be saved in the QuadOS queries database for admin review.")
+
+    with st.form("user_query_form", clear_on_submit=True):
+
+        query_subject = st.text_input(
+            "Subject",
+            placeholder="Example: Login problem"
+        )
+
+        query_question = st.text_area(
+            "Your Question",
+            placeholder="Describe your question or problem...",
+            height=150
+        )
+
+        submit_query = st.form_submit_button(
+            "Send Question",
+            type="primary",
+            use_container_width=True
+        )
+
+        if submit_query:
+
+            if not query_subject.strip():
+                st.error("Please enter a subject.")
+
+            elif not query_question.strip():
+                st.error("Please enter your question.")
+
+            else:
+                submitted_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+                query_id = create_user_query(
+                    user_id=user_id,
+                    name=user_name,
+                    email=user_email,
+                    subject=query_subject,
+                    question=query_question,
+                    submitted_at=submitted_at
+                )
+
+                st.success(
+                    f"Your question has been submitted successfully. Query ID: #{query_id}"
+                )
+
+    st.divider()
+
+    # --------------------------------------------------------
+    # FUTURE ROADMAP
+    # --------------------------------------------------------
+    st.subheader("Future Roadmap")
+    st.markdown("""
+    - 🤖 Machine Learning price prediction
+    - 🧾 Invoice generation
+    - 📈 Additional analytics and insights
+    - 🔔 Improved order notifications
+    - 💬 Enhanced customer support workflow
+    """)
