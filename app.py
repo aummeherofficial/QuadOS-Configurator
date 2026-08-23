@@ -821,7 +821,7 @@ elif page == "All Orders":
     st.title("All Orders")
 
     st.write(
-        "View all orders placed through QuadOS."
+        "View all orders placed through QuadOS in a tabular format."
     )
 
     st.write("")
@@ -830,7 +830,9 @@ elif page == "All Orders":
 
     if orders:
 
-       for order in orders:
+        order_rows = []
+
+        for order in orders:
 
             order_id = order[0]
             customer_name = order[1]
@@ -843,69 +845,39 @@ elif page == "All Orders":
             final_price = order[8]
             order_date = order[9]
 
-            with st.container(border=True):
-
-                st.subheader(
-                    f"Order #{order_id}"
-                )
-
-                col1, col2, col3 = st.columns(3)
-
-                with col1:
-
-                    st.write(
-                        f"**Customer:** {customer_name}"
-                    )
-
-                    st.write(
-                        f"**Email:** {customer_email}"
-                    )
-
-                    st.write(
-                        f"**Device:** {device_type}"
-                    )
-
-                    st.write(
-                        f"**Operating System:** "
-                        f"{operating_system}"
-                    )
-
-                with col2:
-
-                    st.write(
-                        f"**Subtotal:** "
-                        f"₹{subtotal:,.2f}"
-                    )
-
-                    st.write(
-                        f"**Final Price:** "
-                        f"₹{final_price:,.2f}"
-                    )
-
-                with col3:
-
-                    st.write(
-                        f"**Order Date:** "
-                        f"{order_date}"
-                    )
-
-                st.write("")
-
-                st.write("**Configuration**")
-
-                st.code(
+            order_rows.append({
+                "Order ID": order_id,
+                "Customer": customer_name,
+                "Email": customer_email,
+                "Device": device_type,
+                "Operating System": operating_system,
+                "Configuration": (
                     configuration
                     if configuration
                     else "No configuration details"
-                )
-
-                st.write("**Accessories**")
-
-                st.code(
+                ),
+                "Accessories": (
                     accessories
                     if accessories
                     else "No accessories"
-                )
+                ),
+                "Subtotal": f"₹{float(subtotal):,.2f}",
+                "Final Price": f"₹{float(final_price):,.2f}",
+                "Order Date": str(order_date)
+            })
+
+        orders_df = pd.DataFrame(order_rows)
+
+        st.dataframe(
+            orders_df,
+            use_container_width=True,
+            hide_index=True,
+            height=500
+        )
+
+        st.caption(
+            f"Total orders displayed: {len(orders_df)}"
+        )
 
     else:
 
@@ -3569,7 +3541,7 @@ elif page == "My Orders":
     st.title("My Orders")
 
     st.write(
-        "View your orders placed through QuadOS."
+        "View all your orders in a simple tabular format."
     )
 
     st.divider()
@@ -3577,6 +3549,8 @@ elif page == "My Orders":
     orders = get_user_orders(user_id)
 
     if orders:
+
+        order_rows = []
 
         for order in orders:
 
@@ -3589,69 +3563,37 @@ elif page == "My Orders":
             final_price = order[8]
             order_date = order[9]
 
-            with st.container(border=True):
-
-                st.subheader(
-                    f"Order #{order_id}"
-                )
-
-                col1, col2 = st.columns(2)
-
-                with col1:
-
-                    st.write(
-                        f"**Device:** {device_type}"
-                    )
-
-                    st.write(
-                        f"**Operating System:** "
-                        f"{operating_system}"
-                    )
-
-                    st.write(
-                        f"**Order Date:** "
-                        f"{order_date}"
-                    )
-
-                with col2:
-
-                    st.write(
-                        f"**Subtotal:** "
-                        f"₹{subtotal:,.2f}"
-                    )
-
-                    st.write(
-                        f"**Final Price:** "
-                        f"₹{final_price:,.2f}"
-                    )
-
-                st.write("")
-
-                st.write(
-                    "**Configuration**"
-                )
-
-                st.code(
+            order_rows.append({
+                "Order ID": order_id,
+                "Device": device_type,
+                "Operating System": operating_system,
+                "Configuration": (
                     configuration
                     if configuration
                     else "No configuration details"
-                )
+                ),
+                "Accessories": (
+                    accessories
+                    if accessories
+                    else "No accessories"
+                ),
+                "Subtotal": f"₹{float(subtotal):,.2f}",
+                "Final Price": f"₹{float(final_price):,.2f}",
+                "Order Date": str(order_date)
+            })
 
-                st.write(
-                    "**Accessories**"
-                )
+        orders_df = pd.DataFrame(order_rows)
 
-                if accessories:
+        st.dataframe(
+            orders_df,
+            use_container_width=True,
+            hide_index=True,
+            height=500
+        )
 
-                    st.write(
-                        accessories
-                    )
-
-                else:
-
-                    st.write(
-                        "No accessories"
-                    )
+        st.caption(
+            f"Total orders displayed: {len(orders_df)}"
+        )
 
     else:
 
