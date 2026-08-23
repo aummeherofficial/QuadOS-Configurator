@@ -89,6 +89,7 @@ from query_database import (
     create_query_table,
     create_user_query,
     get_all_queries,
+    get_user_queries,
     update_query_status,
     get_query_count
 )
@@ -278,6 +279,30 @@ if "mobile_cart_defaults_v1" not in st.session_state:
 
 def go_to_page(page_name):
     st.session_state.user_navigation = page_name
+
+
+def go_to_admin_page(page_name):
+    """
+    Request an admin navigation change safely.
+
+    IMPORTANT:
+    Do not modify st.session_state["admin_navigation"] after the
+    radio widget with that key has been created. Store the requested
+    destination separately and apply it on the next rerun BEFORE
+    the radio widget is instantiated.
+    """
+    allowed_pages = {
+        "Admin Dashboard",
+        "All Users",
+        "All Orders",
+        "Manage Orders",
+        "Analytics",
+        "Queries",
+        "About",
+    }
+
+    if page_name in allowed_pages:
+        st.session_state.admin_navigation_target = page_name
 
 
 
@@ -1031,6 +1056,24 @@ with st.sidebar:
 
         st.write("ADMIN")
 
+        # Apply a requested destination BEFORE the admin navigation
+        # radio widget is created. This avoids:
+        # StreamlitAPIException: st.session_state.admin_navigation
+        # cannot be modified after the widget ... is instantiated.
+        if "admin_navigation_target" in st.session_state:
+            _admin_target = st.session_state.pop("admin_navigation_target")
+
+            if _admin_target in {
+                "Admin Dashboard",
+                "All Users",
+                "All Orders",
+                "Manage Orders",
+                "Analytics",
+                "Queries",
+                "About",
+            }:
+                st.session_state.admin_navigation = _admin_target
+
         page = st.radio(
             "Navigation",
           [
@@ -1042,6 +1085,7 @@ with st.sidebar:
             "Queries",
             "About"
           ],
+          key="admin_navigation"
         )
 
 
@@ -1148,89 +1192,341 @@ def style_chart(ax, title, ylabel):
 
 if page == "Admin Dashboard":
 
-    st.title("Admin Dashboard")
+    # ========================================================
+    # ADMIN DASHBOARD HEADER
+    # ========================================================
 
-    st.write(
-        f"Welcome, {user_name}"
+    st.markdown(
+        f"""
+        <div style="
+            padding:24px 28px;
+            border-radius:18px;
+            background:linear-gradient(135deg, rgba(20,25,45,.96), rgba(42,42,58,.90));
+            border:1px solid rgba(255,255,255,.10);
+            margin-bottom:22px;
+        ">
+            <div style="font-size:13px;opacity:.65;">QuadOS 3.0 • Administration</div>
+            <div style="font-size:34px;font-weight:800;margin-top:5px;">Admin Dashboard</div>
+            <div style="font-size:15px;opacity:.72;margin-top:6px;">
+                Welcome back, {user_name}. Here's the current platform overview.
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True
     )
 
-    st.write("")
-
-    # --------------------------------------------------------
-    # GET DATA
-    # --------------------------------------------------------
+    # ========================================================
+    # LOAD DATA ONCE
+    # ========================================================
 
     total_users = get_total_users()
-
     total_orders = get_total_orders()
-
     total_revenue = get_total_revenue()
-
     recent_orders = get_recent_orders()
+    all_orders = get_all_orders_with_users()
+    all_queries = get_all_queries()
 
+    pending_queries = [
+        q for q in all_queries
+        if str(q[7] or "Pending") == "Pending"
+    ]
 
-    # --------------------------------------------------------
-    # DASHBOARD CARDS
-    # --------------------------------------------------------
+    in_progress_queries = [
+        q for q in all_queries
+        if str(q[7] or "") == "In Progress"
+    ]
 
-    col1, col2, col3 = st.columns(3)
+    resolved_queries = [
+        q for q in all_queries
+        if str(q[7] or "") == "Resolved"
+    ]
 
-    with col1:
+    # Use ALL orders for accurate status statistics, not only the recent 10.
+    cancelled_orders = sum(
+        1
+        for order in all_orders
+        if len(order) > 10 and str(order[10] or "Placed") == "Cancelled"
+    )
 
+    active_orders = max(total_orders - cancelled_orders, 0)
+
+    average_order_value = (
+        total_revenue / total_orders
+        if total_orders > 0
+        else 0
+    )
+
+    # ========================================================
+    # 1. CORE KPIs — EACH IMPORTANT VALUE APPEARS ONCE
+    # ========================================================
+
+    st.subheader("Overview")
+
+    metric1, metric2, metric3, metric4 = st.columns(4, gap="medium")
+
+    with metric1:
+        st.metric("Registered Users", f"{total_users:,}")
+
+    with metric2:
+        st.metric("Total Orders", f"{total_orders:,}")
+
+    with metric3:
+        st.metric("Total Revenue", f"₹{total_revenue:,.0f}")
+
+    with metric4:
         st.metric(
-            "Total Users",
-            total_users
+            "Pending Queries",
+            f"{len(pending_queries):,}",
+            delta="Action required" if pending_queries else "All clear",
+            delta_color="inverse" if pending_queries else "normal"
         )
-
-    with col2:
-
-        st.metric(
-            "Total Orders",
-            total_orders
-        )
-
-    with col3:
-
-        st.metric(
-            "Total Revenue",
-            f"₹{total_revenue:,.2f}"
-        )
-
 
     st.divider()
 
+    # ========================================================
+    # 2. ATTENTION — ONLY ITEMS THAT NEED ADMIN ACTION
+    # ========================================================
 
-    # --------------------------------------------------------
-    # RECENT ORDERS
-    # --------------------------------------------------------
+    st.subheader("🔔 Needs Your Attention")
 
-    st.subheader("Recent Orders")
+    if pending_queries:
+
+        for query in pending_queries[:5]:
+
+            query_id = query[0]
+            query_name = query[2]
+            query_subject = query[4]
+            query_date = query[6]
+
+            with st.container(border=True):
+
+                q_col1, q_col2 = st.columns([5, 1.2], gap="medium")
+
+                with q_col1:
+                    st.markdown(
+                        f"**#{query_id} — {query_subject}**"
+                    )
+                    st.caption(
+                        f"{query_name} • {query_date}"
+                    )
+
+                with q_col2:
+                    if st.button(
+                        "Open Chat",
+                        key=f"dashboard_query_{query_id}",
+                        use_container_width=True
+                    ):
+                        go_to_admin_page("Queries")
+                        st.rerun()
+
+        if len(pending_queries) > 5:
+            st.caption(
+                f"+ {len(pending_queries) - 5} more pending queries."
+            )
+
+    else:
+        st.success("No pending queries. You're all caught up.")
+
+    st.divider()
+
+    # ========================================================
+    # 3. BUSINESS HEALTH — NEW DATA ONLY
+    # ========================================================
+
+    st.subheader("📊 Business Health")
+
+    health1, health2, health3 = st.columns(3, gap="medium")
+
+    with health1:
+        st.metric(
+            "Active / Placed Orders",
+            f"{active_orders:,}"
+        )
+
+    with health2:
+        st.metric(
+            "Cancelled Orders",
+            f"{cancelled_orders:,}"
+        )
+
+    with health3:
+        st.metric(
+            "Average Order Value",
+            f"₹{average_order_value:,.0f}"
+        )
+
+    st.write("")
+
+    # Device activity is a useful trend and is not repeated elsewhere.
+    device_counts = {}
+
+    for order in all_orders:
+        device_name = str(order[3] or "Unknown")
+        device_counts[device_name] = device_counts.get(device_name, 0) + 1
+
+    if device_counts:
+
+        chart_col1, chart_col2 = st.columns([1.35, 1], gap="large")
+
+        with chart_col1:
+            st.markdown("#### Orders by Device")
+
+            fig, ax = plt.subplots(figsize=(6.2, 3.4))
+
+            bars = ax.bar(
+                list(device_counts.keys()),
+                list(device_counts.values())
+            )
+
+            ax.bar_label(
+                bars,
+                fontsize=8,
+                padding=3
+            )
+
+            style_chart(
+                ax,
+                "Orders by Device",
+                "Orders"
+            )
+
+            plt.tight_layout()
+            st.pyplot(fig, use_container_width=True)
+            plt.close(fig)
+
+        with chart_col2:
+            st.markdown("#### Order Status")
+
+            status_counts = {
+                "Active / Placed": active_orders,
+                "Cancelled": cancelled_orders
+            }
+
+            fig, ax = plt.subplots(figsize=(5.2, 3.4))
+
+            bars = ax.bar(
+                list(status_counts.keys()),
+                list(status_counts.values())
+            )
+
+            ax.bar_label(
+                bars,
+                fontsize=8,
+                padding=3
+            )
+
+            style_chart(
+                ax,
+                "Order Status",
+                "Orders"
+            )
+
+            plt.tight_layout()
+            st.pyplot(fig, use_container_width=True)
+            plt.close(fig)
+
+    else:
+        st.info("Business activity will appear after orders are placed.")
+
+    st.divider()
+
+    # ========================================================
+    # 4. SUPPORT STATUS — WORKFLOW COUNTS, NOT DUPLICATES
+    # ========================================================
+
+    st.subheader("💬 Support Status")
+
+    support1, support2, support3 = st.columns(3, gap="medium")
+
+    with support1:
+        st.metric("Pending", len(pending_queries))
+
+    with support2:
+        st.metric("In Progress", len(in_progress_queries))
+
+    with support3:
+        st.metric("Resolved", len(resolved_queries))
+
+    st.divider()
+
+    # ========================================================
+    # 5. RECENT ORDERS — SINGLE TABLE ON DASHBOARD
+    # ========================================================
+
+    st.subheader("🛒 Recent Orders")
 
     if recent_orders:
 
-        for order in recent_orders:
+        recent_order_rows = []
+
+        for order in recent_orders[:10]:
 
             order_id = order[0]
-            user_id = order[1]
+            customer_id = order[1]
             device = order[2]
             operating_system = order[3]
             final_price = order[4]
             order_date = order[5]
 
-            st.write(
-                f"Order #{order_id} | "
-                f"User ID: {user_id} | "
-                f"{device} | "
-                f"{operating_system} | "
-                f"₹{final_price:,.2f} | "
-                f"{order_date}"
-            )
+            # Status may not exist in older recent-order records.
+            status = order[6] if len(order) > 6 else "Placed"
+
+            recent_order_rows.append({
+                "Order ID": f"#{order_id}",
+                "User ID": customer_id,
+                "Device": device,
+                "OS": operating_system or "-",
+                "Amount": f"₹{float(final_price or 0):,.0f}",
+                "Status": status or "Placed",
+                "Date": str(order_date)
+            })
+
+        st.dataframe(
+            pd.DataFrame(recent_order_rows),
+            use_container_width=True,
+            hide_index=True,
+            height=350
+        )
 
     else:
+        st.info("No orders have been placed yet.")
 
-        st.info(
-            "No orders have been placed yet."
-        )
+    st.divider()
+
+    # ========================================================
+    # 6. QUICK ADMIN ACTIONS
+    # ========================================================
+
+    st.subheader("⚡ Quick Actions")
+
+    quick1, quick2, quick3 = st.columns(3, gap="medium")
+
+    with quick1:
+        if st.button(
+            "👥 View Users",
+            key="dashboard_users",
+            use_container_width=True
+        ):
+            go_to_admin_page("All Users")
+            st.rerun()
+
+    with quick2:
+        if st.button(
+            "📦 Manage Orders",
+            key="dashboard_manage_orders",
+            use_container_width=True
+        ):
+            go_to_admin_page("Manage Orders")
+            st.rerun()
+
+    with quick3:
+        if st.button(
+            "💬 Open Queries",
+            key="dashboard_queries",
+            use_container_width=True
+        ):
+            go_to_admin_page("Queries")
+            st.rerun()
 
 
 # ============================================================
@@ -1434,27 +1730,23 @@ elif page == "Manage Orders":
 
     st.title("Manage Orders")
 
-    st.write(
-        "View and manage QuadOS orders."
+    st.caption(
+        "View, inspect and manage all customer orders from one place."
     )
-
-    st.write("")
 
     orders = get_all_orders_with_users()
 
     if not orders:
 
-        st.info(
-            "There are no orders to manage."
-        )
+        st.info("There are no orders to manage.")
 
     else:
 
         # ----------------------------------------------------
-        # CREATE ORDER LIST
+        # ORDERS TABLE
         # ----------------------------------------------------
 
-        order_options = []
+        table_rows = []
 
         for order in orders:
 
@@ -1462,36 +1754,50 @@ elif page == "Manage Orders":
             customer_name = order[1]
             customer_email = order[2]
             device_type = order[3]
+            operating_system = order[4]
             final_price = order[8]
+            order_date = order[9]
+            status = order[10] or "Placed"
 
-            order_options.append(
-                f"Order #{order_id} | "
-                f"{customer_name} | "
-                f"{device_type} | "
-                f"₹{final_price:,.2f}"
-            )
+            table_rows.append({
+                "Order ID": f"#{order_id}",
+                "Customer": customer_name,
+                "Email": customer_email,
+                "Device": device_type,
+                "OS": operating_system or "-",
+                "Amount": f"₹{float(final_price or 0):,.2f}",
+                "Status": status,
+                "Order Date": str(order_date)
+            })
 
+        st.dataframe(
+            pd.DataFrame(table_rows),
+            use_container_width=True,
+            hide_index=True,
+            height=450
+        )
+
+        st.divider()
 
         # ----------------------------------------------------
-        # SELECT ORDER
+        # ORDER DETAILS / ACTIONS
         # ----------------------------------------------------
+
+        st.subheader("Order Details")
+
+        order_options = [
+            f"#{order[0]} — {order[1]} — {order[3]} — ₹{float(order[8] or 0):,.2f}"
+            for order in orders
+        ]
 
         selected_order = st.selectbox(
-            "Select Order",
-            order_options
+            "Select an order to inspect",
+            order_options,
+            key="admin_manage_order_select"
         )
 
-
-        # ----------------------------------------------------
-        # GET SELECTED ORDER ID
-        # ----------------------------------------------------
-
-        selected_index = order_options.index(
-            selected_order
-        )
-
+        selected_index = order_options.index(selected_order)
         order = orders[selected_index]
-
 
         order_id = order[0]
         customer_name = order[1]
@@ -1505,88 +1811,39 @@ elif page == "Manage Orders":
         order_date = order[9]
         status = order[10] or "Placed"
 
+        detail1, detail2, detail3 = st.columns(3)
 
-        st.write(
-            f"**Customer:** {customer_name}"
+        with detail1:
+            st.write(f"**Customer**")
+            st.write(customer_name)
+            st.write(f"**Email**")
+            st.write(customer_email)
+
+        with detail2:
+            st.write(f"**Device**")
+            st.write(device_type)
+            st.write(f"**Operating System**")
+            st.write(operating_system or "-")
+
+        with detail3:
+            st.write(f"**Order Date**")
+            st.write(order_date)
+            st.write(f"**Status**")
+            st.write(status)
+
+        price1, price2 = st.columns(2)
+
+        with price1:
+            st.metric(
+                "Subtotal",
+                f"₹{float(subtotal or 0):,.2f}"
             )
 
-        st.write(
-            f"**Email:** {customer_email}"
+        with price2:
+            st.metric(
+                "Final Price",
+                f"₹{float(final_price or 0):,.2f}"
             )
-
-
-        # ----------------------------------------------------
-        # DISPLAY ORDER
-        # ----------------------------------------------------
-
-        st.divider()
-
-        st.subheader(
-            f"Order #{order_id}"
-        )
-
-        col1, col2 = st.columns(2)
-
-        with col1:
-        
-            st.write(
-                f"**Customer:** {customer_name}"
-            )
-        
-            st.write(
-                f"**Email:** {customer_email}"
-            )
-        
-            st.write(
-                f"**Device:** {device_type}"
-            )
-        
-            st.write(
-                f"**Operating System:** "
-                f"{operating_system}"
-            )
-        
-            st.write(
-                f"**Order Date:** "
-                f"{order_date}"
-            )
-
-            st.write(
-                f"**Status:** {status}"
-            )
-
-            st.write(
-                f"**User ID:** {user_id}"
-            )
-
-            st.write(
-                f"**Device:** {device_type}"
-            )
-
-            st.write(
-                f"**Operating System:** "
-                f"{operating_system}"
-            )
-
-            st.write(
-                f"**Order Date:** "
-                f"{order_date}"
-            )
-
-        with col2:
-
-            st.write(
-                f"**Subtotal:** "
-                f"₹{subtotal:,.2f}"
-            )
-
-            st.write(
-                f"**Final Price:** "
-                f"₹{final_price:,.2f}"
-            )
-
-
-        st.write("")
 
         st.write("**Configuration**")
 
@@ -1596,7 +1853,6 @@ elif page == "Manage Orders":
             else "No configuration details"
         )
 
-
         st.write("**Accessories**")
 
         st.code(
@@ -1605,26 +1861,30 @@ elif page == "Manage Orders":
             else "No accessories"
         )
 
-
         # ----------------------------------------------------
         # DELETE ORDER
         # ----------------------------------------------------
 
         st.divider()
 
-        if st.button(
-            "Delete Order",
-            type="primary"
-        ):
+        delete_col, _ = st.columns([1, 3])
 
-            delete_order(order_id)
+        with delete_col:
 
-            st.success(
-                f"Order #{order_id} deleted successfully."
-            )
+            if st.button(
+                "Delete Order",
+                type="primary",
+                key=f"delete_admin_order_{order_id}",
+                use_container_width=True
+            ):
 
-            st.rerun()
+                delete_order(order_id)
 
+                st.success(
+                    f"Order #{order_id} deleted successfully."
+                )
+
+                st.rerun()
 
 
 # ============================================================
@@ -3770,15 +4030,243 @@ elif page == "My Orders":
 elif page == "My Profile":
 
     st.title("My Profile")
+    st.caption("Manage and review your QuadOS account information.")
 
-    st.write(
-        f"Name: {user_name}"
+    # --------------------------------------------------------
+    # PROFILE HEADER
+    # --------------------------------------------------------
+
+    initials = "".join(
+        part[0].upper()
+        for part in str(user_name).split()
+        if part
+    )[:2] or "U"
+
+    st.markdown(
+        f"""
+        <div style="
+            padding:24px;
+            border-radius:18px;
+            background:linear-gradient(
+                135deg,
+                rgba(20,25,45,.95),
+                rgba(45,45,65,.88)
+            );
+            border:1px solid rgba(255,255,255,.10);
+            margin-bottom:20px;
+        ">
+            <div style="
+                width:64px;
+                height:64px;
+                border-radius:50%;
+                display:flex;
+                align-items:center;
+                justify-content:center;
+                font-size:24px;
+                font-weight:800;
+                background:rgba(255,255,255,.12);
+                border:1px solid rgba(255,255,255,.18);
+                margin-bottom:14px;
+            ">
+                {initials}
+            </div>
+            <div style="font-size:28px;font-weight:800;">
+                {user_name}
+            </div>
+            <div style="opacity:.70;margin-top:4px;">
+                {user_email}
+            </div>
+            <div style="margin-top:12px;">
+                <span style="
+                    padding:5px 11px;
+                    border-radius:20px;
+                    background:rgba(255,255,255,.10);
+                    font-size:12px;
+                ">
+                    {user_role.upper()}
+                </span>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True
     )
 
-    st.write(
-        f"Email: {user_email}"
+    # --------------------------------------------------------
+    # PROFILE STATISTICS
+    # --------------------------------------------------------
+
+    profile_orders = get_user_orders(user_id)
+    profile_order_count = len(profile_orders)
+
+    profile_total_spend = 0
+
+    for order in profile_orders:
+        try:
+            profile_total_spend += float(order[8] or 0)
+        except (TypeError, ValueError, IndexError):
+            pass
+
+    profile_queries = get_user_queries(user_id)
+    profile_query_count = len(profile_queries)
+
+    stat1, stat2, stat3 = st.columns(3)
+
+    with stat1:
+        st.metric("My Orders", profile_order_count)
+
+    with stat2:
+        st.metric("Total Spent", f"₹{profile_total_spend:,.0f}")
+
+    with stat3:
+        st.metric("Support Queries", profile_query_count)
+
+    st.divider()
+
+    # --------------------------------------------------------
+    # ACCOUNT INFORMATION
+    # --------------------------------------------------------
+
+    st.subheader("👤 Account Information")
+
+    info_col1, info_col2 = st.columns(2, gap="large")
+
+    with info_col1:
+
+        st.text_input(
+            "Full Name",
+            value=str(current_user[1] or ""),
+            disabled=True,
+            key="profile_display_name"
+        )
+
+        st.text_input(
+            "Email",
+            value=str(current_user[2] or ""),
+            disabled=True,
+            key="profile_display_email"
+        )
+
+        st.text_input(
+            "Phone",
+            value=str(current_user[4] or "Not provided"),
+            disabled=True,
+            key="profile_display_phone"
+        )
+
+    with info_col2:
+
+        st.text_area(
+            "Address",
+            value=str(current_user[5] or "Not provided"),
+            disabled=True,
+            height=120,
+            key="profile_display_address"
+        )
+
+        st.text_input(
+            "Account Role",
+            value=str(current_user[6] or "user").capitalize(),
+            disabled=True,
+            key="profile_display_role"
+        )
+
+    st.caption(
+        "Your profile information is currently displayed in read-only mode."
     )
 
+    st.divider()
+
+    # --------------------------------------------------------
+    # ORDER SUMMARY
+    # --------------------------------------------------------
+
+    st.subheader("📦 Account Activity")
+
+    activity_col1, activity_col2 = st.columns(2, gap="large")
+
+    with activity_col1:
+
+        if profile_orders:
+
+            placed_count = sum(
+                1
+                for order in profile_orders
+                if (order[10] or "Placed") != "Cancelled"
+            )
+
+            cancelled_count = sum(
+                1
+                for order in profile_orders
+                if (order[10] or "Placed") == "Cancelled"
+            )
+
+            st.markdown(
+                f"""
+                <div style="padding:20px;border-radius:15px;
+                            background:rgba(255,255,255,.045);
+                            border:1px solid rgba(255,255,255,.08);">
+                    <div style="font-size:14px;opacity:.65;">
+                        Order Status
+                    </div>
+                    <div style="font-size:18px;margin-top:10px;">
+                        🟢 Active / Placed: <b>{placed_count}</b>
+                    </div>
+                    <div style="font-size:18px;margin-top:8px;">
+                        🔴 Cancelled: <b>{cancelled_count}</b>
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+
+        else:
+            st.info("You have not placed any orders yet.")
+
+    with activity_col2:
+
+        pending_user_queries = sum(
+            1
+            for query in profile_queries
+            if str(query[3] or "") == "Pending"
+        )
+
+        resolved_user_queries = sum(
+            1
+            for query in profile_queries
+            if str(query[3] or "") == "Resolved"
+        )
+
+        st.markdown(
+            f"""
+            <div style="padding:20px;border-radius:15px;
+                        background:rgba(255,255,255,.045);
+                        border:1px solid rgba(255,255,255,.08);">
+                <div style="font-size:14px;opacity:.65;">
+                    Support Activity
+                </div>
+                <div style="font-size:18px;margin-top:10px;">
+                    🟠 Pending: <b>{pending_user_queries}</b>
+                </div>
+                <div style="font-size:18px;margin-top:8px;">
+                    🟢 Resolved: <b>{resolved_user_queries}</b>
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+    st.divider()
+
+    # --------------------------------------------------------
+    # SECURITY
+    # --------------------------------------------------------
+
+    st.subheader("🔐 Account Security")
+
+    st.info(
+        "Your password is protected and is not displayed in your profile. "
+        "If you need to change it, use the Forgot Password option on the login screen."
+    )
 
 
 # ============================================================
