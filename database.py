@@ -1,11 +1,21 @@
 import sqlite3
 
 
+# ============================================================
+# DATABASE CONFIGURATION
+# ============================================================
+
 DATABASE_NAME = "quados.db"
 
 
+# ============================================================
+# DATABASE CONNECTION
+# ============================================================
+
 def get_connection():
-    return sqlite3.connect(DATABASE_NAME)
+    connection = sqlite3.connect(DATABASE_NAME)
+    connection.execute("PRAGMA foreign_keys = ON")
+    return connection
 
 
 # ============================================================
@@ -17,35 +27,162 @@ def create_tables():
     connection = get_connection()
     cursor = connection.cursor()
 
+    # ========================================================
     # USERS TABLE
+    # ========================================================
+
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS users (
+
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+
             name TEXT NOT NULL,
+
             email TEXT UNIQUE NOT NULL,
+
             password TEXT NOT NULL,
+
             phone TEXT,
+
             address TEXT,
+
             role TEXT DEFAULT 'user'
         )
     """)
 
+    # ========================================================
     # ORDERS TABLE
+    # ========================================================
+
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS orders (
+
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+
             user_id INTEGER NOT NULL,
+
             device_type TEXT NOT NULL,
+
             operating_system TEXT,
+
             configuration TEXT,
+
             accessories TEXT,
+
             subtotal REAL,
+
             discount REAL,
+
             final_price REAL,
+
             order_date TEXT,
-            FOREIGN KEY (user_id) REFERENCES users(id)
+
+            FOREIGN KEY (user_id)
+            REFERENCES users(id)
         )
     """)
+
+    # ========================================================
+    # USER TABLE MIGRATION
+    # ========================================================
+    #
+    # IMPORTANT:
+    #
+    # CREATE TABLE IF NOT EXISTS does NOT modify an existing
+    # database table.
+    #
+    # Therefore, if an older QuadOS database already exists,
+    # we check whether the "role" column exists.
+    #
+    # If it doesn't exist, we add it.
+    # Existing users and orders are NOT deleted.
+    # ========================================================
+
+    cursor.execute("""
+        PRAGMA table_info(users)
+    """)
+
+    user_columns = cursor.fetchall()
+
+    user_column_names = [
+        column[1]
+        for column in user_columns
+    ]
+
+    # --------------------------------------------------------
+    # ADD ROLE COLUMN IF MISSING
+    # --------------------------------------------------------
+
+    if "role" not in user_column_names:
+
+        cursor.execute("""
+            ALTER TABLE users
+            ADD COLUMN role TEXT DEFAULT 'user'
+        """)
+
+    # ========================================================
+    # ENSURE EXISTING USERS HAVE USER ROLE
+    # ========================================================
+
+    cursor.execute("""
+        UPDATE users
+        SET role = 'user'
+        WHERE role IS NULL
+           OR TRIM(role) = ''
+    """)
+
+    # ========================================================
+    # ENSURE ADMIN ACCOUNT
+    # ========================================================
+
+    cursor.execute("""
+        SELECT id
+        FROM users
+        WHERE LOWER(email) = ?
+    """, (
+        "admin@quados.com",
+    ))
+
+    existing_admin = cursor.fetchone()
+
+    if existing_admin is None:
+
+        cursor.execute("""
+            INSERT INTO users
+            (
+                name,
+                email,
+                password,
+                phone,
+                address,
+                role
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (
+            "QuadOS Admin",
+            "admin@quados.com",
+            "admin123",
+            "",
+            "",
+            "admin"
+        ))
+
+    else:
+
+        # Make sure the existing admin account
+        # has admin privileges.
+
+        cursor.execute("""
+            UPDATE users
+            SET role = 'admin'
+            WHERE LOWER(email) = ?
+        """, (
+            "admin@quados.com",
+        ))
+
+    # ========================================================
+    # COMMIT
+    # ========================================================
 
     connection.commit()
     connection.close()
@@ -55,7 +192,13 @@ def create_tables():
 # CREATE USER
 # ============================================================
 
-def create_user(name, email, password, phone, address):
+def create_user(
+    name,
+    email,
+    password,
+    phone,
+    address
+):
 
     connection = get_connection()
     cursor = connection.cursor()
@@ -64,14 +207,21 @@ def create_user(name, email, password, phone, address):
 
         cursor.execute("""
             INSERT INTO users
-            (name, email, password, phone, address, role)
+            (
+                name,
+                email,
+                password,
+                phone,
+                address,
+                role
+            )
             VALUES (?, ?, ?, ?, ?, ?)
         """, (
-            name,
-            email,
+            name.strip(),
+            email.strip().lower(),
             password,
-            phone,
-            address,
+            phone.strip(),
+            address.strip(),
             "user"
         ))
 
@@ -88,23 +238,31 @@ def create_user(name, email, password, phone, address):
         connection.close()
 
 
-
 # ============================================================
 # LOGIN USER
 # ============================================================
 
-def login_user(email, password):
+def login_user(identifier, password):
 
     connection = get_connection()
     cursor = connection.cursor()
 
+    identifier = identifier.strip().lower()
+
     cursor.execute("""
-        SELECT *
+        SELECT
+            id,
+            name,
+            email,
+            password,
+            phone,
+            address,
+            role
         FROM users
-        WHERE email = ?
+        WHERE LOWER(email) = ?
         AND password = ?
     """, (
-        email.strip(),
+        identifier,
         password
     ))
 
@@ -115,6 +273,66 @@ def login_user(email, password):
     return user
 
 
+# ============================================================
+# GET USER BY ID
+# ============================================================
+
+def get_user_by_id(user_id):
+
+    connection = get_connection()
+    cursor = connection.cursor()
+
+    cursor.execute("""
+        SELECT
+            id,
+            name,
+            email,
+            password,
+            phone,
+            address,
+            role
+        FROM users
+        WHERE id = ?
+    """, (
+        user_id,
+    ))
+
+    user = cursor.fetchone()
+
+    connection.close()
+
+    return user
+
+
+# ============================================================
+# GET USER BY EMAIL
+# ============================================================
+
+def get_user_by_email(email):
+
+    connection = get_connection()
+    cursor = connection.cursor()
+
+    cursor.execute("""
+        SELECT
+            id,
+            name,
+            email,
+            password,
+            phone,
+            address,
+            role
+        FROM users
+        WHERE LOWER(email) = ?
+    """, (
+        email.strip().lower(),
+    ))
+
+    user = cursor.fetchone()
+
+    connection.close()
+
+    return user
 
 
 # ============================================================
@@ -129,8 +347,10 @@ def create_admin():
     cursor.execute("""
         SELECT id
         FROM users
-        WHERE email = ?
-    """, ("admin@quados.com",))
+        WHERE LOWER(email) = ?
+    """, (
+        "admin@quados.com",
+    ))
 
     existing_admin = cursor.fetchone()
 
@@ -138,7 +358,14 @@ def create_admin():
 
         cursor.execute("""
             INSERT INTO users
-            (name, email, password, phone, address, role)
+            (
+                name,
+                email,
+                password,
+                phone,
+                address,
+                role
+            )
             VALUES (?, ?, ?, ?, ?, ?)
         """, (
             "QuadOS Admin",
@@ -149,8 +376,17 @@ def create_admin():
             "admin"
         ))
 
-        connection.commit()
+    else:
 
+        cursor.execute("""
+            UPDATE users
+            SET role = 'admin'
+            WHERE LOWER(email) = ?
+        """, (
+            "admin@quados.com",
+        ))
+
+    connection.commit()
     connection.close()
 
 
@@ -164,11 +400,23 @@ def get_user_orders(user_id):
     cursor = connection.cursor()
 
     cursor.execute("""
-        SELECT *
+        SELECT
+            id,
+            user_id,
+            device_type,
+            operating_system,
+            configuration,
+            accessories,
+            subtotal,
+            discount,
+            final_price,
+            order_date
         FROM orders
         WHERE user_id = ?
         ORDER BY id DESC
-    """, (user_id,))
+    """, (
+        user_id,
+    ))
 
     orders = cursor.fetchall()
 
@@ -187,7 +435,17 @@ def get_all_orders():
     cursor = connection.cursor()
 
     cursor.execute("""
-        SELECT *
+        SELECT
+            id,
+            user_id,
+            device_type,
+            operating_system,
+            configuration,
+            accessories,
+            subtotal,
+            discount,
+            final_price,
+            order_date
         FROM orders
         ORDER BY id DESC
     """)
@@ -211,14 +469,15 @@ def delete_order(order_id):
     cursor.execute("""
         DELETE FROM orders
         WHERE id = ?
-    """, (order_id,))
+    """, (
+        order_id,
+    ))
 
     connection.commit()
     connection.close()
 
 
-
-    # ============================================================
+# ============================================================
 # ADMIN DASHBOARD - TOTAL USERS
 # ============================================================
 
@@ -314,7 +573,7 @@ def get_recent_orders():
     return orders
 
 
-    # ============================================================
+# ============================================================
 # GET ALL USERS
 # ============================================================
 
@@ -342,7 +601,7 @@ def get_all_users():
     return users
 
 
-    # ============================================================
+# ============================================================
 # USER - ORDER COUNT
 # ============================================================
 
@@ -355,7 +614,9 @@ def get_user_order_count(user_id):
         SELECT COUNT(*)
         FROM orders
         WHERE user_id = ?
-    """, (user_id,))
+    """, (
+        user_id,
+    ))
 
     total = cursor.fetchone()[0]
 
@@ -414,8 +675,7 @@ def create_order(
     connection.close()
 
 
-
-    # ============================================================
+# ============================================================
 # ADMIN - ORDERS WITH USER DETAILS
 # ============================================================
 
@@ -447,3 +707,10 @@ def get_all_orders_with_users():
     connection.close()
 
     return orders
+
+
+# ============================================================
+# INITIALIZE DATABASE
+# ============================================================
+
+create_tables()
