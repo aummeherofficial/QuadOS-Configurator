@@ -447,6 +447,452 @@ def go_to_admin_page(page_name):
 
 
 
+
+# ============================================================
+# CONFIGURATION PROFILES
+# ============================================================
+
+PROFILE_OPTIONS = [
+    "Balanced / Everyday",
+    "Gaming",
+    "Office & Productivity",
+    "Coding & Development",
+    "Multimedia & Streaming",
+    "Photography",
+    "Video Editing",
+    "Creative Design",
+    "Social Media & Content",
+    "Battery Saver",
+    "Business",
+    "Student"
+]
+
+PC_PROFILE_OPTIONS = [
+    "Balanced / Everyday",
+    "Gaming",
+    "Office & Productivity",
+    "Coding & Development",
+    "Multimedia & Streaming",
+    "Video Editing",
+    "Creative Design",
+    "Business",
+    "Student"
+]
+
+MOBILE_PROFILE_OPTIONS = [
+    "Balanced / Everyday",
+    "Gaming",
+    "Multimedia & Streaming",
+    "Photography",
+    "Social Media & Content",
+    "Battery Saver",
+    "Student"
+]
+
+# Each profile contains option names from config.py.
+PC_PROFILE_CONFIGS = {
+    "Balanced / Everyday": {
+        "Windows PC": {
+            "pc_cpu": "Intel Core i5", "pc_motherboard": "Mid Range Motherboard",
+            "pc_ram": "16 GB", "pc_gpu": "Integrated Graphics", "pc_storage": "1 TB SSD",
+            "pc_power_supply": "650W", "pc_cooling": "Air Cooler", "pc_cabinet": "Mid Range Cabinet",
+            "pc_monitor": "24 inch Full HD", "pc_keyboard": "Basic Keyboard", "pc_mouse": "Basic Mouse",
+            "pc_accessories": []
+        },
+        "macOS": {
+            "mac_cpu": "Apple M4", "mac_ram": "16 GB", "mac_storage": "512 GB SSD",
+            "mac_gpu": "Integrated Apple GPU", "mac_display": "24-inch Retina Display",
+            "mac_keyboard": "Magic Keyboard", "mac_mouse": "No Mouse", "mac_accessories": []
+        }
+    },
+    "Gaming": {
+        "Windows PC": {
+            "pc_cpu": "Intel Core i7", "pc_motherboard": "High End Motherboard",
+            "pc_ram": "32 GB", "pc_gpu": "NVIDIA RTX 4060", "pc_storage": "1 TB SSD",
+            "pc_power_supply": "750W", "pc_cooling": "Tower Cooler", "pc_cabinet": "Mid Range Cabinet",
+            "pc_monitor": "27 inch 2K", "pc_keyboard": "Mechanical Keyboard", "pc_mouse": "Gaming Mouse",
+            "pc_accessories": ["Headphones"]
+        },
+        "macOS": {
+            "mac_cpu": "Apple M4 Max", "mac_ram": "64 GB", "mac_storage": "2 TB SSD",
+            "mac_gpu": "30-Core GPU", "mac_display": "32-inch Retina Display",
+            "mac_keyboard": "Magic Keyboard with Touch ID", "mac_mouse": "Magic Mouse",
+            "mac_accessories": ["Wireless Earphones"]
+        }
+    },
+    "Office & Productivity": {
+        "Windows PC": {
+            "pc_cpu": "Intel Core i5", "pc_motherboard": "Basic Motherboard",
+            "pc_ram": "16 GB", "pc_gpu": "Integrated Graphics", "pc_storage": "512 GB SSD",
+            "pc_power_supply": "550W", "pc_cooling": "Stock Air Cooling", "pc_cabinet": "Basic Cabinet",
+            "pc_monitor": "24 inch Full HD", "pc_keyboard": "Basic Keyboard", "pc_mouse": "Basic Mouse",
+            "pc_accessories": []
+        },
+        "macOS": {
+            "mac_cpu": "Apple M4", "mac_ram": "16 GB", "mac_storage": "512 GB SSD",
+            "mac_gpu": "Integrated Apple GPU", "mac_display": "24-inch Retina Display",
+            "mac_keyboard": "Magic Keyboard", "mac_mouse": "Magic Mouse",
+            "mac_accessories": []
+        }
+    },
+    "Coding & Development": {
+        "Windows PC": {
+            "pc_cpu": "AMD Ryzen 7", "pc_motherboard": "Mid Range Motherboard",
+            "pc_ram": "32 GB", "pc_gpu": "Integrated Graphics", "pc_storage": "1 TB SSD",
+            "pc_power_supply": "650W", "pc_cooling": "Air Cooler", "pc_cabinet": "Mid Range Cabinet",
+            "pc_monitor": "27 inch 2K", "pc_keyboard": "Mechanical Keyboard", "pc_mouse": "Basic Mouse",
+            "pc_accessories": []
+        },
+        "macOS": {
+            "mac_cpu": "Apple M4 Pro", "mac_ram": "32 GB", "mac_storage": "1 TB SSD",
+            "mac_gpu": "16-Core GPU", "mac_display": "27-inch Retina Display",
+            "mac_keyboard": "Magic Keyboard", "mac_mouse": "Magic Trackpad",
+            "mac_accessories": []
+        }
+    },
+    "Multimedia & Streaming": {
+        "Windows PC": {
+            "pc_cpu": "Intel Core i7", "pc_motherboard": "High End Motherboard",
+            "pc_ram": "32 GB", "pc_gpu": "NVIDIA RTX 4060", "pc_storage": "2 TB SSD",
+            "pc_power_supply": "750W", "pc_cooling": "Tower Cooler", "pc_cabinet": "Premium Cabinet",
+            "pc_monitor": "27 inch 2K", "pc_keyboard": "Mechanical Keyboard", "pc_mouse": "Gaming Mouse",
+            "pc_accessories": ["Webcam", "Headphones"]
+        },
+        "macOS": {
+            "mac_cpu": "Apple M4 Pro", "mac_ram": "24 GB", "mac_storage": "1 TB SSD",
+            "mac_gpu": "16-Core GPU", "mac_display": "27-inch Retina Display",
+            "mac_keyboard": "Magic Keyboard", "mac_mouse": "Magic Mouse",
+            "mac_accessories": ["Webcam", "Wireless Earphones"]
+        }
+    },
+    "Video Editing": {
+        "Windows PC": {
+            "pc_cpu": "AMD Ryzen 9", "pc_motherboard": "High End Motherboard",
+            "pc_ram": "64 GB", "pc_gpu": "NVIDIA RTX 4070", "pc_storage": "2 TB SSD",
+            "pc_power_supply": "850W", "pc_cooling": "Liquid Cooling", "pc_cabinet": "Premium Cabinet",
+            "pc_monitor": "27 inch 2K", "pc_keyboard": "Mechanical Keyboard", "pc_mouse": "Premium Gaming Mouse",
+            "pc_accessories": ["Webcam"]
+        },
+        "macOS": {
+            "mac_cpu": "Apple M4 Max", "mac_ram": "64 GB", "mac_storage": "2 TB SSD",
+            "mac_gpu": "40-Core GPU", "mac_display": "32-inch Retina Display",
+            "mac_keyboard": "Magic Keyboard with Touch ID", "mac_mouse": "Magic Trackpad",
+            "mac_accessories": ["External SSD 2TB"]
+        }
+    },
+    "Creative Design": {
+        "Windows PC": {
+            "pc_cpu": "Intel Core i7", "pc_motherboard": "High End Motherboard",
+            "pc_ram": "32 GB", "pc_gpu": "NVIDIA RTX 4060", "pc_storage": "1 TB SSD",
+            "pc_power_supply": "750W", "pc_cooling": "Tower Cooler", "pc_cabinet": "Premium Cabinet",
+            "pc_monitor": "27 inch 2K", "pc_keyboard": "Mechanical Keyboard", "pc_mouse": "Premium Gaming Mouse",
+            "pc_accessories": []
+        },
+        "macOS": {
+            "mac_cpu": "Apple M4 Pro", "mac_ram": "32 GB", "mac_storage": "1 TB SSD",
+            "mac_gpu": "20-Core GPU", "mac_display": "27-inch Retina Display",
+            "mac_keyboard": "Magic Keyboard with Touch ID", "mac_mouse": "Magic Trackpad",
+            "mac_accessories": []
+        }
+    },
+    "Business": {
+        "Windows PC": {
+            "pc_cpu": "Intel Core i5", "pc_motherboard": "Basic Motherboard",
+            "pc_ram": "16 GB", "pc_gpu": "Integrated Graphics", "pc_storage": "1 TB SSD",
+            "pc_power_supply": "550W", "pc_cooling": "Stock Air Cooling", "pc_cabinet": "Basic Cabinet",
+            "pc_monitor": "24 inch Full HD", "pc_keyboard": "Basic Keyboard", "pc_mouse": "Basic Mouse",
+            "pc_accessories": ["Webcam"]
+        },
+        "macOS": {
+            "mac_cpu": "Apple M4", "mac_ram": "16 GB", "mac_storage": "1 TB SSD",
+            "mac_gpu": "Integrated Apple GPU", "mac_display": "24-inch Retina Display",
+            "mac_keyboard": "Magic Keyboard with Touch ID", "mac_mouse": "Magic Mouse",
+            "mac_accessories": []
+        }
+    },
+    "Student": {
+        "Windows PC": {
+            "pc_cpu": "Intel Core i5", "pc_motherboard": "Basic Motherboard",
+            "pc_ram": "16 GB", "pc_gpu": "Integrated Graphics", "pc_storage": "512 GB SSD",
+            "pc_power_supply": "550W", "pc_cooling": "Stock Air Cooling", "pc_cabinet": "Mid Range Cabinet",
+            "pc_monitor": "24 inch Full HD", "pc_keyboard": "Basic Keyboard", "pc_mouse": "Basic Mouse",
+            "pc_accessories": ["Earphones"]
+        },
+        "macOS": {
+            "mac_cpu": "Apple M4", "mac_ram": "16 GB", "mac_storage": "512 GB SSD",
+            "mac_gpu": "Integrated Apple GPU", "mac_display": "24-inch Retina Display",
+            "mac_keyboard": "Magic Keyboard", "mac_mouse": "No Mouse",
+            "mac_accessories": []
+        }
+    }
+}
+
+MOBILE_PROFILE_CONFIGS = {
+    "Balanced / Everyday": {
+        "iPhone": {
+            "iphone_display": "6.1-inch OLED", "iphone_battery": "4000 mAh",
+            "iphone_camera": "48 MP Single Camera", "iphone_ram": "6 GB",
+            "iphone_storage": "128 GB", "iphone_processor": "A16 Bionic",
+            "iphone_connectivity": "5G", "iphone_frame": "Aluminium", "iphone_color": "Black",
+            "iphone_accessories": []
+        },
+        "Android": {
+            "android_display": "6.5-inch AMOLED", "android_battery": "5000 mAh",
+            "android_camera": "50 MP Dual Camera", "android_ram": "8 GB",
+            "android_storage": "256 GB", "android_processor": "Snapdragon 7 Series",
+            "android_connectivity": "5G", "android_build": "Glass", "android_color": "Black",
+            "android_accessories": []
+        }
+    },
+    "Gaming": {
+        "iPhone": {
+            "iphone_display": "6.7-inch OLED", "iphone_battery": "4500 mAh",
+            "iphone_camera": "48 MP Dual Camera", "iphone_ram": "12 GB",
+            "iphone_storage": "512 GB", "iphone_processor": "A18 Pro",
+            "iphone_connectivity": "5G", "iphone_frame": "Titanium", "iphone_color": "Natural Titanium",
+            "iphone_accessories": ["AirPods Pro"]
+        },
+        "Android": {
+            "android_display": "6.8-inch AMOLED", "android_battery": "5500 mAh",
+            "android_camera": "108 MP Triple Camera", "android_ram": "16 GB",
+            "android_storage": "512 GB", "android_processor": "Snapdragon 8 Elite",
+            "android_connectivity": "5G", "android_build": "Aluminium", "android_color": "Black",
+            "android_accessories": ["Wireless Earphones", "Fast Charger"]
+        }
+    },
+    "Multimedia & Streaming": {
+        "iPhone": {
+            "iphone_display": "6.7-inch OLED", "iphone_battery": "4500 mAh",
+            "iphone_camera": "48 MP Dual Camera", "iphone_ram": "8 GB",
+            "iphone_storage": "512 GB", "iphone_processor": "A18",
+            "iphone_connectivity": "5G", "iphone_frame": "Aluminium", "iphone_color": "Blue",
+            "iphone_accessories": ["AirPods"]
+        },
+        "Android": {
+            "android_display": "6.7-inch AMOLED", "android_battery": "5000 mAh",
+            "android_camera": "50 MP Triple Camera", "android_ram": "12 GB",
+            "android_storage": "512 GB", "android_processor": "Snapdragon 8 Gen 3",
+            "android_connectivity": "5G", "android_build": "Glass", "android_color": "Blue",
+            "android_accessories": ["Wireless Earphones"]
+        }
+    },
+    "Photography": {
+        "iPhone": {
+            "iphone_display": "6.3-inch OLED", "iphone_battery": "4500 mAh",
+            "iphone_camera": "48 MP + 48 MP + 48 MP Pro Camera", "iphone_ram": "12 GB",
+            "iphone_storage": "1 TB", "iphone_processor": "A18 Pro",
+            "iphone_connectivity": "5G", "iphone_frame": "Titanium", "iphone_color": "Natural Titanium",
+            "iphone_accessories": ["USB-C Cable"]
+        },
+        "Android": {
+            "android_display": "6.7-inch AMOLED", "android_battery": "5000 mAh",
+            "android_camera": "200 MP Pro Camera", "android_ram": "16 GB",
+            "android_storage": "1 TB", "android_processor": "Snapdragon 8 Elite",
+            "android_connectivity": "5G", "android_build": "Titanium", "android_color": "Green",
+            "android_accessories": ["Fast Charger"]
+        }
+    },
+    "Social Media & Content": {
+        "iPhone": {
+            "iphone_display": "6.3-inch OLED", "iphone_battery": "4000 mAh",
+            "iphone_camera": "48 MP Dual Camera", "iphone_ram": "8 GB",
+            "iphone_storage": "256 GB", "iphone_processor": "A18",
+            "iphone_connectivity": "5G", "iphone_frame": "Aluminium", "iphone_color": "Blue",
+            "iphone_accessories": ["iPhone Case", "Screen Protector"]
+        },
+        "Android": {
+            "android_display": "6.7-inch AMOLED", "android_battery": "5000 mAh",
+            "android_camera": "108 MP Triple Camera", "android_ram": "12 GB",
+            "android_storage": "256 GB", "android_processor": "Snapdragon 8 Gen 3",
+            "android_connectivity": "5G", "android_build": "Glass", "android_color": "Purple",
+            "android_accessories": ["Android Phone Case", "Screen Protector"]
+        }
+    },
+    "Battery Saver": {
+        "iPhone": {
+            "iphone_display": "6.1-inch OLED", "iphone_battery": "5000 mAh",
+            "iphone_camera": "12 MP Single Camera", "iphone_ram": "6 GB",
+            "iphone_storage": "128 GB", "iphone_processor": "A15 Bionic",
+            "iphone_connectivity": "4G", "iphone_frame": "Aluminium", "iphone_color": "Black",
+            "iphone_accessories": []
+        },
+        "Android": {
+            "android_display": "6.5-inch AMOLED", "android_battery": "6000 mAh",
+            "android_camera": "50 MP Single Camera", "android_ram": "6 GB",
+            "android_storage": "128 GB", "android_processor": "Snapdragon 7 Series",
+            "android_connectivity": "4G", "android_build": "Plastic", "android_color": "Black",
+            "android_accessories": []
+        }
+    },
+    "Student": {
+        "iPhone": {
+            "iphone_display": "6.1-inch OLED", "iphone_battery": "4000 mAh",
+            "iphone_camera": "12 MP Single Camera", "iphone_ram": "6 GB",
+            "iphone_storage": "128 GB", "iphone_processor": "A15 Bionic",
+            "iphone_connectivity": "5G", "iphone_frame": "Aluminium", "iphone_color": "White",
+            "iphone_accessories": ["Screen Protector"]
+        },
+        "Android": {
+            "android_display": "6.5-inch AMOLED", "android_battery": "5000 mAh",
+            "android_camera": "50 MP Dual Camera", "android_ram": "8 GB",
+            "android_storage": "256 GB", "android_processor": "Snapdragon 7 Series",
+            "android_connectivity": "5G", "android_build": "Plastic", "android_color": "Blue",
+            "android_accessories": ["Screen Protector"]
+        }
+    }
+}
+
+def _profile_display(options, name):
+    if not name or name not in options:
+        return "Not Selected — ₹0"
+    return f"{name} — ₹{market_price(options[name]):,.0f}"
+
+def _set_profile_value(key, options, name):
+    st.session_state[key] = _profile_display(options, name)
+
+def _set_profile_accessories(key, options, names):
+    st.session_state[key] = [
+        _profile_display(options, name)
+        for name in names
+        if name in options
+    ]
+
+def _reset_profile_cart(device_type, operating_system):
+    st.session_state.cart = []
+    st.session_state.cart_device_type = device_type
+    st.session_state.cart_operating_system = operating_system
+
+def apply_pc_profile():
+    profile = st.session_state.get("pc_profile", "Balanced / Everyday")
+    platform = st.session_state.get("pc_platform", "Windows PC")
+    config = PC_PROFILE_CONFIGS.get(profile, {}).get(platform)
+    if not config:
+        return
+
+    _reset_profile_cart("PC", "macOS" if platform == "macOS" else "Windows")
+
+    if platform == "Windows PC":
+        option_groups = {
+            "pc_cpu": CPU_OPTIONS, "pc_motherboard": MOTHERBOARD_OPTIONS,
+            "pc_ram": RAM_OPTIONS, "pc_gpu": GPU_OPTIONS, "pc_storage": STORAGE_OPTIONS,
+            "pc_power_supply": POWER_SUPPLY_OPTIONS, "pc_cooling": COOLING_OPTIONS,
+            "pc_cabinet": CABINET_OPTIONS, "pc_monitor": MONITOR_OPTIONS,
+            "pc_keyboard": KEYBOARD_OPTIONS, "pc_mouse": MOUSE_OPTIONS
+        }
+        categories = {
+            "pc_cpu": ("cpu", "CPU"), "pc_motherboard": ("motherboard", "Motherboard"),
+            "pc_ram": ("ram", "RAM"), "pc_gpu": ("gpu", "GPU"), "pc_storage": ("storage", "Storage"),
+            "pc_power_supply": ("power_supply", "Power Supply"), "pc_cooling": ("cooling", "Cooling"),
+            "pc_cabinet": ("cabinet", "Cabinet"), "pc_monitor": ("monitor", "Monitor"),
+            "pc_keyboard": ("keyboard", "Keyboard"), "pc_mouse": ("mouse", "Mouse")
+        }
+        for key, options in option_groups.items():
+            name = config.get(key)
+            _set_profile_value(key, options, name)
+            if name in options and name not in ("Integrated Graphics", "No Monitor", "No Keyboard", "No Mouse", "Stock Air Cooling"):
+                category, label = categories[key]
+                add_to_cart(f"{label} - {name}", market_price(options[name]), category=category)
+            elif name in options and options[name] > 0:
+                category, label = categories[key]
+                add_to_cart(f"{label} - {name}", market_price(options[name]), category=category)
+        _set_profile_accessories("pc_accessories", ACCESSORY_OPTIONS, config.get("pc_accessories", []))
+        for name in config.get("pc_accessories", []):
+            if name in ACCESSORY_OPTIONS:
+                add_to_cart("Accessory - " + name, market_price(ACCESSORY_OPTIONS[name]), category=f"accessory:{name}")
+    else:
+        option_groups = {
+            "mac_cpu": MACOS_CPU_OPTIONS, "mac_ram": MACOS_RAM_OPTIONS,
+            "mac_storage": MACOS_STORAGE_OPTIONS, "mac_gpu": MACOS_GPU_OPTIONS,
+            "mac_display": MACOS_DISPLAY_OPTIONS, "mac_keyboard": MACOS_KEYBOARD_OPTIONS,
+            "mac_mouse": MACOS_MOUSE_OPTIONS
+        }
+        categories = {
+            "mac_cpu": ("processor", "Processor"), "mac_ram": ("memory", "Memory"),
+            "mac_storage": ("storage", "Storage"), "mac_gpu": ("graphics", "Graphics"),
+            "mac_display": ("display", "Display"), "mac_keyboard": ("keyboard", "Keyboard"),
+            "mac_mouse": ("mouse", "Mouse / Trackpad")
+        }
+        for key, options in option_groups.items():
+            name = config.get(key)
+            _set_profile_value(key, options, name)
+            if name in options and options[name] > 0:
+                category, label = categories[key]
+                add_to_cart(f"{label} - {name}", market_price(options[name]), category=category)
+        _set_profile_accessories("mac_accessories", MACOS_ACCESSORY_OPTIONS, config.get("mac_accessories", []))
+        for name in config.get("mac_accessories", []):
+            if name in MACOS_ACCESSORY_OPTIONS:
+                add_to_cart("Accessory - " + name, market_price(MACOS_ACCESSORY_OPTIONS[name]), category=f"accessory:{name}")
+
+def apply_mobile_profile():
+    profile = st.session_state.get("mobile_profile", "Balanced / Everyday")
+    platform = st.session_state.get("mobile_platform", "iPhone")
+    config = MOBILE_PROFILE_CONFIGS.get(profile, {}).get(platform)
+    if not config:
+        return
+
+    os_name = "iOS" if platform == "iPhone" else "Android"
+    _reset_profile_cart("Mobile", os_name)
+
+    if platform == "iPhone":
+        option_groups = {
+            "iphone_display": IPHONE_DISPLAY_OPTIONS, "iphone_battery": IPHONE_BATTERY_OPTIONS,
+            "iphone_camera": IPHONE_CAMERA_OPTIONS, "iphone_ram": IPHONE_RAM_OPTIONS,
+            "iphone_storage": IPHONE_STORAGE_OPTIONS, "iphone_processor": IPHONE_PROCESSOR_OPTIONS,
+            "iphone_connectivity": IPHONE_CONNECTIVITY_OPTIONS, "iphone_frame": IPHONE_FRAME_OPTIONS,
+            "iphone_color": IPHONE_COLOR_OPTIONS
+        }
+        categories = {
+            "iphone_display": ("iphone_display", "Display"), "iphone_battery": ("iphone_battery", "Battery"),
+            "iphone_camera": ("iphone_camera", "Camera"), "iphone_ram": ("iphone_ram", "RAM"),
+            "iphone_storage": ("iphone_storage", "Storage"), "iphone_processor": ("iphone_processor", "Processor"),
+            "iphone_connectivity": ("iphone_connectivity", "Connectivity"), "iphone_frame": ("iphone_frame", "Frame"),
+            "iphone_color": ("iphone_color", "Color")
+        }
+        accessory_key, accessory_options = "iphone_accessories", IPHONE_ACCESSORY_OPTIONS
+    else:
+        option_groups = {
+            "android_display": ANDROID_DISPLAY_OPTIONS, "android_battery": ANDROID_BATTERY_OPTIONS,
+            "android_camera": ANDROID_CAMERA_OPTIONS, "android_ram": ANDROID_RAM_OPTIONS,
+            "android_storage": ANDROID_STORAGE_OPTIONS, "android_processor": ANDROID_PROCESSOR_OPTIONS,
+            "android_connectivity": ANDROID_CONNECTIVITY_OPTIONS, "android_build": ANDROID_BUILD_OPTIONS,
+            "android_color": ANDROID_COLOR_OPTIONS
+        }
+        categories = {
+            "android_display": ("android_display", "Display"), "android_battery": ("android_battery", "Battery"),
+            "android_camera": ("android_camera", "Camera"), "android_ram": ("android_ram", "RAM"),
+            "android_storage": ("android_storage", "Storage"), "android_processor": ("android_processor", "Processor"),
+            "android_connectivity": ("android_connectivity", "Connectivity"), "android_build": ("android_build", "Build Material"),
+            "android_color": ("android_color", "Color")
+        }
+        accessory_key, accessory_options = "android_accessories", ANDROID_ACCESSORY_OPTIONS
+
+    for key, options in option_groups.items():
+        name = config.get(key)
+        _set_profile_value(key, options, name)
+        if name in options and options[name] > 0:
+            category, label = categories[key]
+            add_to_cart(f"{label} - {name}", market_price(options[name]), category=category)
+
+    _set_profile_accessories(accessory_key, accessory_options, config.get(accessory_key, []))
+    for name in config.get(accessory_key, []):
+        if name in accessory_options:
+            add_to_cart("Accessory - " + name, market_price(accessory_options[name]), category=f"mobile_accessory:{name}")
+
+def handle_pc_profile_change():
+    apply_pc_profile()
+
+def handle_mobile_profile_change():
+    apply_mobile_profile()
+
+def reset_profile_for_pc_platform():
+    st.session_state.pc_profile = "Balanced / Everyday"
+    handle_pc_platform_change()
+
+def reset_profile_for_mobile_platform():
+    st.session_state.mobile_profile = "Balanced / Everyday"
+    handle_mobile_platform_change()
+
+
 # ============================================================
 # ORDER VALIDATION
 # ============================================================
@@ -1471,7 +1917,7 @@ if page == "Admin Dashboard":
     st.divider()
 
     # ========================================================
-    # 3. BUSINESS HEALTH — NEW DATA ONLY
+    # 3. BUSINESS HEALTH — MODERN, COMPACT ANALYTICS
     # ========================================================
 
     st.subheader("📊 Business Health")
@@ -1479,26 +1925,19 @@ if page == "Admin Dashboard":
     health1, health2, health3 = st.columns(3, gap="medium")
 
     with health1:
-        st.metric(
-            "Active / Placed Orders",
-            f"{active_orders:,}"
-        )
+        st.metric("Active / Placed Orders", f"{active_orders:,}")
 
     with health2:
-        st.metric(
-            "Cancelled Orders",
-            f"{cancelled_orders:,}"
-        )
+        st.metric("Cancelled Orders", f"{cancelled_orders:,}")
 
     with health3:
-        st.metric(
-            "Average Order Value",
-            f"₹{average_order_value:,.0f}"
-        )
+        st.metric("Average Order Value", f"₹{average_order_value:,.0f}")
 
     st.write("")
 
-    # Device activity is a useful trend and is not repeated elsewhere.
+    # Keep only the two most useful charts:
+    # 1. Orders by device = where demand is coming from
+    # 2. Order status = current order health
     device_counts = {}
 
     for order in all_orders:
@@ -1506,60 +1945,180 @@ if page == "Admin Dashboard":
         device_counts[device_name] = device_counts.get(device_name, 0) + 1
 
     if device_counts:
+        chart_col1, chart_col2 = st.columns(2, gap="large")
 
-        chart_col1, chart_col2 = st.columns([1.35, 1], gap="large")
-
+        # ----------------------------------------------------
+        # CHART 1 - ORDERS BY DEVICE
+        # ----------------------------------------------------
         with chart_col1:
             st.markdown("#### Orders by Device")
 
-            fig, ax = plt.subplots(figsize=(6.2, 3.4))
+            labels = list(device_counts.keys())
+            values = list(device_counts.values())
 
-            bars = ax.bar(
-                list(device_counts.keys()),
-                list(device_counts.values())
+            fig, ax = plt.subplots(figsize=(6.2, 3.5))
+
+            # Modern QuadOS dark chart styling
+            fig.patch.set_facecolor("#111318")
+            ax.set_facecolor("#111318")
+
+            bars = ax.barh(
+                labels,
+                values,
+                height=0.52,
+                color="#F4C430"
             )
 
-            ax.bar_label(
-                bars,
-                fontsize=8,
-                padding=3
+            max_value = max(values) if values else 1
+            ax.set_xlim(0, max_value * 1.22)
+
+            ax.invert_yaxis()
+
+            for bar, value in zip(bars, values):
+                ax.text(
+                    value + max_value * 0.03,
+                    bar.get_y() + bar.get_height() / 2,
+                    f"{value}",
+                    va="center",
+                    fontsize=10,
+                    fontweight="bold",
+                    color="#FFFFFF"
+                )
+
+            ax.set_xlabel("")
+            ax.set_ylabel("")
+            ax.tick_params(
+                axis="both",
+                colors="#D7D9DE",
+                labelsize=9,
+                length=0
             )
 
-            style_chart(
-                ax,
+            ax.grid(
+                axis="x",
+                linestyle="--",
+                linewidth=0.7,
+                color="#FFFFFF",
+                alpha=0.12
+            )
+
+            ax.set_axisbelow(True)
+            ax.spines["top"].set_visible(False)
+            ax.spines["right"].set_visible(False)
+            ax.spines["left"].set_visible(False)
+            ax.spines["bottom"].set_color("#3A3D45")
+
+            ax.set_title(
                 "Orders by Device",
-                "Orders"
+                loc="left",
+                fontsize=12,
+                fontweight="bold",
+                color="#FFFFFF",
+                pad=12
             )
 
             plt.tight_layout()
             st.pyplot(fig, use_container_width=True)
             plt.close(fig)
 
+        # ----------------------------------------------------
+        # CHART 2 - ORDER STATUS
+        # ----------------------------------------------------
         with chart_col2:
             st.markdown("#### Order Status")
 
-            status_counts = {
-                "Active / Placed": active_orders,
-                "Cancelled": cancelled_orders
-            }
+            status_labels = ["Active / Placed", "Cancelled"]
+            status_values = [active_orders, cancelled_orders]
 
-            fig, ax = plt.subplots(figsize=(5.2, 3.4))
+            # Remove zero-value slices so the chart stays clean.
+            filtered = [
+                (label, value)
+                for label, value in zip(status_labels, status_values)
+                if value > 0
+            ]
 
-            bars = ax.bar(
-                list(status_counts.keys()),
-                list(status_counts.values())
-            )
+            fig, ax = plt.subplots(figsize=(6.2, 3.5))
 
-            ax.bar_label(
-                bars,
-                fontsize=8,
-                padding=3
-            )
+            fig.patch.set_facecolor("#111318")
+            ax.set_facecolor("#111318")
 
-            style_chart(
-                ax,
+            if filtered:
+                filtered_labels = [item[0] for item in filtered]
+                filtered_values = [item[1] for item in filtered]
+
+                status_colors = [
+                    "#22C55E" if label == "Active / Placed" else "#EF4444"
+                    for label in filtered_labels
+                ]
+
+                wedges, _ = ax.pie(
+                    filtered_values,
+                    startangle=90,
+                    counterclock=False,
+                    colors=status_colors,
+                    wedgeprops={
+                        "width": 0.38,
+                        "edgecolor": "#111318",
+                        "linewidth": 3
+                    }
+                )
+
+                total_status = sum(filtered_values)
+
+                ax.text(
+                    0,
+                    0.08,
+                    f"{total_status}",
+                    ha="center",
+                    va="center",
+                    fontsize=22,
+                    fontweight="bold",
+                    color="#FFFFFF"
+                )
+
+                ax.text(
+                    0,
+                    -0.16,
+                    "Total Orders",
+                    ha="center",
+                    va="center",
+                    fontsize=9,
+                    color="#AEB3BE"
+                )
+
+                legend_labels = [
+                    f"{label}  •  {value}"
+                    for label, value in zip(filtered_labels, filtered_values)
+                ]
+
+                ax.legend(
+                    wedges,
+                    legend_labels,
+                    loc="center left",
+                    bbox_to_anchor=(0.98, 0.5),
+                    frameon=False,
+                    fontsize=9,
+                    labelcolor="#D7D9DE"
+                )
+            else:
+                ax.text(
+                    0.5,
+                    0.5,
+                    "No order data",
+                    transform=ax.transAxes,
+                    ha="center",
+                    va="center",
+                    color="#AEB3BE",
+                    fontsize=11
+                )
+
+            ax.set_title(
                 "Order Status",
-                "Orders"
+                loc="left",
+                fontsize=12,
+                fontweight="bold",
+                color="#FFFFFF",
+                pad=12
             )
 
             plt.tight_layout()
@@ -2635,8 +3194,22 @@ elif page == "PC Configurator":
                 "macOS"
             ],
             key="pc_platform",
-            on_change=handle_pc_platform_change
+            on_change=reset_profile_for_pc_platform
         )
+
+        if "pc_profile" not in st.session_state:
+            st.session_state.pc_profile = "Balanced / Everyday"
+            apply_pc_profile()
+
+        st.selectbox(
+            "Configuration Profile",
+            PC_PROFILE_OPTIONS,
+            key="pc_profile",
+            on_change=handle_pc_profile_change,
+            help="Choose a use-case and QuadOS will load a suitable starting configuration. You can change every component afterward."
+        )
+
+        st.caption("💡 Selecting a profile automatically fills suitable components. You can customize any selection afterward.")
 
         # ====================================================
         # WINDOWS PC
@@ -3354,8 +3927,22 @@ elif page == "Mobile Configurator":
                 "Android"
             ],
             key="mobile_platform",
-            on_change=handle_mobile_platform_change
+            on_change=reset_profile_for_mobile_platform
         )
+
+        if "mobile_profile" not in st.session_state:
+            st.session_state.mobile_profile = "Balanced / Everyday"
+            apply_mobile_profile()
+
+        st.selectbox(
+            "Configuration Profile",
+            MOBILE_PROFILE_OPTIONS,
+            key="mobile_profile",
+            on_change=handle_mobile_profile_change,
+            help="Choose a use-case and QuadOS will load a suitable starting configuration. You can change every feature afterward."
+        )
+
+        st.caption("💡 Selecting a profile automatically fills suitable features. You can customize any selection afterward.")
 
         # ========================================================
         # iPHONE
