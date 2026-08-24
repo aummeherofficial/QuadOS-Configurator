@@ -85,6 +85,7 @@ from config import (
 
 from pricing import calculate_pc_price
 from market_pricing import market_price, calculate_bundle_discount
+from email_service import send_order_confirmation_email, get_latest_order_id
 
 from query_database import (
     create_query_table,
@@ -1620,6 +1621,10 @@ order_success_message = st.session_state.pop(
 
 if order_success_message:
     st.success(order_success_message)
+
+order_email_status = st.session_state.pop("order_email_status", None)
+if order_email_status and "sent to" not in order_email_status.lower():
+    st.warning(order_email_status)
 
 
 # ============================================================
@@ -3863,9 +3868,27 @@ elif page == "PC Configurator":
                             order_date=order_date
                         )
 
-                        st.session_state.order_success_message = (
-                            "Your order has been placed successfully."
+                        order_id = get_latest_order_id(user_id)
+                        email_ok, email_message = send_order_confirmation_email(
+                            recipient_email=user_email,
+                            customer_name=user_name,
+                            order_id=order_id,
+                            device_type="PC",
+                            operating_system=cart_os,
+                            configuration=configuration_text,
+                            accessories=accessories_text,
+                            subtotal=cart_subtotal,
+                            discount=cart_discount,
+                            final_price=cart_final,
+                            order_date=order_date
                         )
+
+                        st.session_state.order_success_message = (
+                            "Your order has been placed successfully. "
+                            + ("Confirmation email sent to your registered email." if email_ok
+                               else "Your order was saved, but the confirmation email could not be sent.")
+                        )
+                        st.session_state.order_email_status = email_message
 
                         clear_cart()
 
@@ -4456,9 +4479,27 @@ elif page == "Mobile Configurator":
                             order_date=order_date
                         )
 
-                        st.session_state.order_success_message = (
-                            "Your mobile order has been placed successfully."
+                        order_id = get_latest_order_id(user_id)
+                        email_ok, email_message = send_order_confirmation_email(
+                            recipient_email=user_email,
+                            customer_name=user_name,
+                            order_id=order_id,
+                            device_type="Mobile",
+                            operating_system=mobile_cart_os,
+                            configuration=configuration_text,
+                            accessories=accessories_text,
+                            subtotal=mobile_cart_subtotal,
+                            discount=mobile_cart_discount,
+                            final_price=mobile_cart_final,
+                            order_date=order_date
                         )
+
+                        st.session_state.order_success_message = (
+                            "Your mobile order has been placed successfully. "
+                            + ("Confirmation email sent to your registered email." if email_ok
+                               else "Your order was saved, but the confirmation email could not be sent.")
+                        )
+                        st.session_state.order_email_status = email_message
 
                         clear_cart()
                         st.session_state.cart_device_type = "Mobile"
