@@ -1,0 +1,47 @@
+QUADOS
+-------
+
+Email: admin@quados.com
+Password: admin123
+
+aum.com
+Aum@12345
+
+aum.meher@gmail.com
+aum
+
+asmit@gmail.com
+Asmit*123#
+
+future enhancements
+--------------------
+
+host the app -----------------------------------------------------------------------   DONE
+add to cart in right side-----------------------------------------------------------   DONE
+show my orders in tabular structure-------------------------------------------------   DONE
+implement authentication patterns for create account and login----------------------   DONE
+forget password---------------------------------------------------------------------   DONE
+add cancel order for users----------------------------------------------------------   DONE
+about section - featues, contact, questions, help query send questions to database--   DONE
+ADD communication between admin and user through query section but make a separate chat help query section on user side dont include it inside the about section-----------------------------------   DONE
+
+Add order status - confirmed, in progress, cancelled, completed, payment pending which can be shown in user and can be modified by the admin also add in dashboard to change quick status of order
+
+Make default configuration dropdown for profiles for all pc and phones such as gaming(both), office(pc only), coding(pc only), photography(mob only), multimedia streaming(both), more profiles and their suitable configurations
+
+
+apply discounts
+
+android brand models - oneplus, Samsung
+
+WhatsApp integration - send order details and invoice 
+
+payment gateway 
+
+change colors of matplotlib charts
+
+add trend chart after ML implementation
+
+do something with my profile 
+
+chatbot

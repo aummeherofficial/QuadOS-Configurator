@@ -84,6 +84,7 @@ from config import (
 
 
 from pricing import calculate_pc_price
+from market_pricing import market_price, calculate_bundle_discount
 
 from query_database import (
     create_query_table,
@@ -115,9 +116,8 @@ from query_ui import (
 # ============================================================
 
 def show_options(options):
-
     return [
-        f"{name} — ₹{price:,.0f}"
+        f"{name} — ₹{market_price(price):,.0f}"
         for name, price in options.items()
     ]
 
@@ -125,9 +125,150 @@ def show_options(options):
 def show_options_with_none(options):
     """Return options with a zero-price Not Selected choice first."""
     return ["Not Selected — ₹0"] + [
-        f"{name} — ₹{price:,.0f}"
+        f"{name} — ₹{market_price(price):,.0f}"
         for name, price in options.items()
     ]
+
+
+def render_offers_section():
+    st.markdown(
+        """
+        <div style="padding:16px 20px;border-radius:15px;margin:8px 0 22px 0;
+        background:linear-gradient(135deg,rgba(70,58,0,.9),rgba(25,22,4,.9));
+        border:1px solid rgba(255,210,0,.35);">
+        <div style="font-size:23px;font-weight:800;">🔥 QuadOS Offers</div>
+        <div style="font-size:13px;opacity:.75;margin-top:4px;">
+        Buy qualifying combinations and the discount is applied automatically. No coupon code required.
+        </div></div>
+        """,
+        unsafe_allow_html=True
+    )
+    cols = st.columns(4)
+    offers = [
+        ("🖥️ PC Combo", "3%–12%", "2+ components / complete PC"),
+        ("🍎 Mac Combo", "3%–10%", "2+ components / peripherals"),
+        ("📱 Smartphone Combo", "3%–10%", "2+ components / accessories"),
+        ("🎁 Accessories", "5%–8%", "Buy 2 or more"),
+    ]
+    for col, (title, discount, detail) in zip(cols, offers):
+        with col:
+            st.markdown(
+                f"""<div style="padding:12px;border:1px solid rgba(255,255,255,.12);
+                border-radius:12px;min-height:92px;">
+                <b>{title}</b><br><span style="font-size:19px;font-weight:800;">{discount} OFF</span><br>
+                <small style="opacity:.65;">{detail}</small></div>""",
+                unsafe_allow_html=True
+            )
+
+
+def _fallback_bundle_discount(cart):
+    """Defensive discount calculation for carts from older sessions/files.
+
+    The cart can contain categories from older QuadOS versions, so this
+    fallback uses the actual cart contents instead of relying only on exact
+    category names. This guarantees that a real multi-item combination gets
+    an offer even when an older market_pricing.py is still installed.
+    """
+    items = list(cart or [])
+    if not items:
+        return 0.0, ""
+
+    def is_accessory(item):
+        category = str(item.get("category", "")).lower()
+        name = str(item.get("name", "")).lower()
+        return (
+            category.startswith("accessory:")
+            or category.startswith("mobile_accessory:")
+            or name.startswith("accessory - ")
+        )
+
+    accessories = [item for item in items if is_accessory(item)]
+    core_items = [item for item in items if not is_accessory(item)]
+    core_count = len(core_items)
+    accessory_count = len(accessories)
+
+    device_type = str(
+        st.session_state.get("cart_device_type", "")
+    ).strip()
+    operating_system = str(
+        st.session_state.get("cart_operating_system", "")
+    ).strip()
+
+    # Infer the device if an old session did not store cart_device_type.
+    categories = [str(item.get("category", "")).lower() for item in items]
+    if not device_type:
+        if any(c.startswith(("iphone_", "android_", "mobile_accessory:")) for c in categories):
+            device_type = "Mobile"
+        else:
+            device_type = "PC"
+
+    offers = []
+
+    if core_count == 0:
+        if accessory_count >= 3:
+            offers.append((8.0, "3+ accessories — 8% bundle discount"))
+        elif accessory_count >= 2:
+            offers.append((5.0, "2 accessories — 5% bundle discount"))
+
+    elif device_type == "Mobile":
+        if core_count >= 6 and accessory_count >= 2:
+            offers.append((10.0, "Smartphone + 2 accessories — 10% bundle discount"))
+        if core_count >= 6 and accessory_count >= 1:
+            offers.append((8.0, "Complete smartphone + accessory — 8% bundle discount"))
+        if core_count >= 6:
+            offers.append((7.0, "Complete smartphone — 7% bundle discount"))
+        if core_count >= 4:
+            offers.append((6.0, "4+ smartphone components — 6% discount"))
+        if core_count >= 3:
+            offers.append((5.0, "3+ smartphone components — 5% discount"))
+        if core_count >= 2:
+            offers.append((3.0, "Smartphone component combo — 3% discount"))
+
+    elif operating_system == "macOS":
+        if core_count >= 6 and accessory_count >= 1:
+            offers.append((10.0, "Complete Mac + peripherals — 10% bundle discount"))
+        if core_count >= 6:
+            offers.append((8.0, "Complete macOS setup — 8% bundle discount"))
+        if core_count >= 4:
+            offers.append((7.0, "4+ Mac components — 7% discount"))
+        if core_count >= 3:
+            offers.append((5.0, "3+ Mac components — 5% discount"))
+        if core_count >= 2:
+            offers.append((3.0, "Mac component combo — 3% discount"))
+
+    else:
+        # Windows PC
+        if core_count >= 6 and accessory_count >= 1:
+            offers.append((12.0, "Complete PC + accessory — 12% bundle discount"))
+        if core_count >= 6:
+            offers.append((10.0, "Complete Windows PC — 10% bundle discount"))
+        if core_count >= 4:
+            offers.append((7.0, "4+ PC components — 7% discount"))
+        if core_count >= 3:
+            offers.append((5.0, "3+ PC components — 5% discount"))
+        if core_count >= 2:
+            offers.append((3.0, "PC component combo — 3% discount"))
+
+    # Accessory combinations can improve an already qualifying device offer.
+    if accessory_count >= 2 and core_count >= 2:
+        offers.append((8.0, "Device + 2 accessories — 8% bundle discount"))
+
+    return max(offers, key=lambda x: x[0]) if offers else (0.0, "")
+
+
+def get_discounted_cart_totals():
+    subtotal = get_cart_total()
+
+    # First use the normal pricing module. If it returns 0 for a cart that
+    # clearly contains a combination, use the defensive calculation above.
+    percent, offer = calculate_bundle_discount(st.session_state.cart)
+
+    if percent <= 0 and len(st.session_state.cart) >= 2:
+        percent, offer = _fallback_bundle_discount(st.session_state.cart)
+
+    discount = subtotal * percent / 100.0
+    final = max(subtotal - discount, 0.0)
+    return subtotal, discount, final, percent, offer
 
 
 # ============================================================
@@ -549,7 +690,7 @@ def sync_selectbox_to_cart(
         update_cart_item(
             category,
             f"{label_prefix} - {selected_name}",
-            options[selected_name],
+            market_price(options[selected_name]),
             operating_system
         )
 
@@ -581,7 +722,7 @@ def sync_accessories(widget_key, options, operating_system):
         if name in options:
             add_to_cart(
                 "Accessory - " + name,
-                options[name],
+                market_price(options[name]),
                 category=f"accessory:{name}"
             )
 
@@ -625,7 +766,7 @@ def sync_mobile_selectbox_to_cart(
         update_mobile_cart_item(
             category,
             f"{label_prefix} - {selected_name}",
-            options[selected_name],
+            market_price(options[selected_name]),
             operating_system
         )
 
@@ -654,7 +795,7 @@ def sync_mobile_accessories(widget_key, options, operating_system):
         if name in options:
             add_to_cart(
                 "Accessory - " + name,
-                options[name],
+                market_price(options[name]),
                 category=f"mobile_accessory:{name}"
             )
 
@@ -689,7 +830,7 @@ def handle_mobile_platform_change():
 
 def selected_price(options, selected_name):
     """Return zero for Not Selected, otherwise return the option price."""
-    return float(options.get(selected_name, 0))
+    return market_price(options.get(selected_name, 0))
 
 
 def handle_pc_platform_change():
@@ -1891,15 +2032,10 @@ elif page == "Manage Orders":
 # ANALYTICS
 # ============================================================
 
-
 elif page == "Analytics":
 
     st.title("QuadOS Analytics")
-
-    st.write(
-        "Overview of QuadOS orders, revenue and pricing."
-    )
-
+    st.write("A clear view of orders, revenue, customer buying patterns and trends.")
     st.divider()
 
     # ========================================================
@@ -1909,582 +2045,424 @@ elif page == "Analytics":
     data = get_order_data()
 
     if data.empty:
-
-        st.info(
-            "No order data available for analytics yet."
-        )
+        st.info("No order data available for analytics yet.")
 
     else:
-
         # ====================================================
         # PREPARE DATA
         # ====================================================
 
-        data["order_date"] = pd.to_datetime(
-            data["order_date"]
-        )
-
+        data = data.copy()
+        data["order_date"] = pd.to_datetime(data["order_date"], errors="coerce")
+        data["final_price"] = pd.to_numeric(data["final_price"], errors="coerce").fillna(0)
+        data["device_type"] = data["device_type"].fillna("Unknown").astype(str)
+        data["operating_system"] = data["operating_system"].fillna("Unknown").astype(str)
+        data = data.dropna(subset=["order_date"])
         data["date"] = data["order_date"].dt.normalize()
 
-        data["final_price"] = pd.to_numeric(
-            data["final_price"]
-        )
+        total_orders = len(data)
+        total_revenue = data["final_price"].sum()
+        average_order_value = data["final_price"].mean() if total_orders else 0
 
         # ====================================================
         # SUMMARY CARDS
         # ====================================================
 
-        total_orders = len(data)
-
-        total_revenue = data[
-            "final_price"
-        ].sum()
-
-        average_order_value = data[
-            "final_price"
-        ].mean()
-
-
-        col1, col2, col3 = st.columns(3)
+        col1, col2, col3, col4 = st.columns(4, gap="medium")
 
         with col1:
-
-            st.metric(
-                "Total Orders",
-                total_orders
-            )
+            st.metric("Total Orders", f"{total_orders:,}")
 
         with col2:
-
-            st.metric(
-                "Total Revenue",
-                f"₹{total_revenue:,.0f}"
-            )
+            st.metric("Total Revenue", f"₹{total_revenue:,.0f}")
 
         with col3:
+            st.metric("Average Order Value", f"₹{average_order_value:,.0f}")
 
-            st.metric(
-                "Average Order Value",
-                f"₹{average_order_value:,.0f}"
-            )
-
+        with col4:
+            highest_order = data["final_price"].max() if total_orders else 0
+            st.metric("Highest Order", f"₹{highest_order:,.0f}")
 
         st.divider()
 
+        # ====================================================
+        # ANALYTICS CHART STYLE
+        # ====================================================
+
+        CHART_BG = "#111827"
+        TEXT = "#E5E7EB"
+        MUTED = "#9CA3AF"
+        GRID = "#374151"
+        BLUE = "#38BDF8"
+        ORANGE = "#F59E0B"
+        GREEN = "#34D399"
+        PURPLE = "#A78BFA"
+        RED = "#FB7185"
+        TEAL = "#2DD4BF"
+
+        def analytics_style(ax, title, ylabel=""):
+            ax.set_title(
+                title,
+                fontsize=13,
+                fontweight="bold",
+                color=TEXT,
+                loc="left",
+                pad=12,
+            )
+            ax.set_ylabel(ylabel, color=MUTED, fontsize=9)
+            ax.tick_params(axis="both", colors=MUTED, labelsize=9)
+            ax.grid(axis="y", linestyle="--", linewidth=0.7, alpha=0.35, color=GRID)
+            ax.set_axisbelow(True)
+            ax.spines["top"].set_visible(False)
+            ax.spines["right"].set_visible(False)
+            ax.spines["left"].set_color(GRID)
+            ax.spines["bottom"].set_color(GRID)
+            ax.set_facecolor(CHART_BG)
+
+        def finish_chart(fig):
+            fig.patch.set_facecolor(CHART_BG)
+            plt.tight_layout(pad=1.5)
+            st.pyplot(fig, use_container_width=True)
+            plt.close(fig)
+
+        def rupee_short(value):
+            value = float(value)
+            if abs(value) >= 10_000_000:
+                return f"₹{value / 10_000_000:.1f}Cr"
+            if abs(value) >= 100_000:
+                return f"₹{value / 100_000:.1f}L"
+            if abs(value) >= 1_000:
+                return f"₹{value / 1_000:.0f}K"
+            return f"₹{value:.0f}"
 
         # ====================================================
-        # ROW 1
+        # ROW 1 — DEVICE PERFORMANCE
         # ====================================================
 
-        col1, col2, col3 = st.columns(3)
-
+        st.subheader("📦 Device Performance")
+        col1, col2 = st.columns(2, gap="large")
 
         # ----------------------------------------------------
         # CHART 1 - ORDERS BY DEVICE
         # ----------------------------------------------------
 
         with col1:
+            device_orders = data["device_type"].value_counts().sort_values()
 
-            st.subheader(
-                "Orders by Device"
-            )
-
-            device_orders = (
-                data["device_type"]
-                .value_counts()
-            )
-            
-            fig, ax = plt.subplots(figsize=(4, 2.8))
-            
-            bars = ax.bar(
+            fig, ax = plt.subplots(figsize=(7, 4))
+            bars = ax.barh(
                 device_orders.index,
                 device_orders.values,
-                label="Orders"
+                color=BLUE,
+                height=0.55,
             )
-            
+
             ax.bar_label(
                 bars,
-                padding=3,
-                fontsize=8
+                labels=[f"{int(v):,}" for v in device_orders.values],
+                padding=5,
+                fontsize=9,
+                color=TEXT,
             )
-            
-            style_chart(
-                ax,
-                "Orders by Device",
-                "Number of Orders"
-            )
-            
-            plt.tight_layout()
-            
-            st.pyplot(
-                fig,
-                use_container_width=True
-            )
-            
-            plt.close(fig)
+            ax.set_xlabel("Number of orders", color=MUTED, fontsize=9)
+            analytics_style(ax, "Orders by Device", "")
+            ax.grid(axis="x", linestyle="--", linewidth=0.7, alpha=0.3, color=GRID)
+            ax.grid(axis="y", visible=False)
+            finish_chart(fig)
 
         # ----------------------------------------------------
         # CHART 2 - REVENUE BY DEVICE
         # ----------------------------------------------------
 
         with col2:
-
-            st.subheader(
-                "Revenue by Device"
-            )
-
-            device_revenue = (
-                data.groupby(
-                    "device_type"
-                )["final_price"]
-                .sum()
-            )
-
-            fig, ax = plt.subplots(
-                figsize=(4, 2.5)
-            )
-
-
-
             device_revenue = (
                 data.groupby("device_type")["final_price"]
                 .sum()
+                .sort_values()
             )
 
-            fig, ax = plt.subplots(figsize=(4, 2.8))
-
-            bars = ax.bar(
+            fig, ax = plt.subplots(figsize=(7, 4))
+            bars = ax.barh(
                 device_revenue.index,
                 device_revenue.values,
-                label="Revenue"
+                color=ORANGE,
+                height=0.55,
             )
 
             ax.bar_label(
                 bars,
-                labels=[
-                    f"₹{value:,.0f}"
-                    for value in device_revenue.values
-                ],
-                padding=3,
-                fontsize=7
+                labels=[rupee_short(v) for v in device_revenue.values],
+                padding=5,
+                fontsize=9,
+                color=TEXT,
             )
+            ax.set_xlabel("Revenue", color=MUTED, fontsize=9)
+            analytics_style(ax, "Revenue by Device", "")
+            ax.grid(axis="x", linestyle="--", linewidth=0.7, alpha=0.3, color=GRID)
+            ax.grid(axis="y", visible=False)
+            finish_chart(fig)
 
-            style_chart(
-                ax,
-                "Revenue by Device",
-                "Revenue (₹)"
-            )
+        st.divider()
 
-            plt.tight_layout()
+        # ====================================================
+        # ROW 2 — CUSTOMER CHOICES
+        # ====================================================
 
-            st.pyplot(
-                fig,
-                use_container_width=True
-            )
-
-            plt.close(fig)
-
-
+        st.subheader("🧩 Customer Choices")
+        col1, col2 = st.columns(2, gap="large")
 
         # ----------------------------------------------------
         # CHART 3 - ORDERS BY OPERATING SYSTEM
         # ----------------------------------------------------
 
-        with col3:
-
-            st.subheader(
-                "Orders by OS"
-            )
-
-            os_orders = (
-                data["operating_system"]
-                .value_counts()
-            )
-
-            fig, ax = plt.subplots(figsize=(4, 2.8))
-
-            wedges, texts, autotexts = ax.pie(
-                os_orders.values,
-                autopct="%1.0f%%",
-                startangle=90
-            )
-
-            ax.legend(
-                wedges,
-                os_orders.index,
-                title="Operating System",
-                loc="center left",
-                bbox_to_anchor=(1, 0.5),
-                fontsize=7,
-                frameon=False
-            )
-
-            ax.set_title(
-                "Orders by Operating System",
-                fontsize=11,
-                fontweight="bold",
-                pad=10
-            )
-
-            plt.tight_layout()
-
-            st.pyplot(
-                fig,
-                use_container_width=True
-            )
-
-            plt.close(fig)
-
-        # ====================================================
-        # ROW 2
-        # ====================================================
-
-        col1, col2, col3 = st.columns(3)
-
-
-        # ----------------------------------------------------
-        # CHART 4 - REVENUE BY OS
-        # ----------------------------------------------------
-
         with col1:
+            os_orders = data["operating_system"].value_counts().sort_values()
 
-            st.subheader(
-                "Revenue by OS"
+            fig, ax = plt.subplots(figsize=(7, 4))
+            bars = ax.barh(
+                os_orders.index,
+                os_orders.values,
+                color=GREEN,
+                height=0.55,
             )
 
-            os_revenue = (
-                data.groupby("operating_system")["final_price"]
-                .sum()
-            )
-            
-            fig, ax = plt.subplots(figsize=(4, 2.8))
-            
-            bars = ax.bar(
-                os_revenue.index,
-                os_revenue.values,
-                label="Revenue"
-            )
-            
             ax.bar_label(
                 bars,
-                labels=[
-                    f"₹{value:,.0f}"
-                    for value in os_revenue.values
-                ],
-                padding=3,
-                fontsize=7
+                labels=[f"{int(v):,}" for v in os_orders.values],
+                padding=5,
+                fontsize=9,
+                color=TEXT,
             )
-            
-            style_chart(
-                ax,
-                "Revenue by Operating System",
-                "Revenue (₹)"
-            )
-            
-            ax.tick_params(
-                axis="x",
-                rotation=20
-            )
-            
-            plt.tight_layout()
-            
-            st.pyplot(
-                fig,
-                use_container_width=True
-            )
-            
-            plt.close(fig)
-
-            # ----------------------------------------------------
-            # CHART 5 - ORDERS OVER TIME
-            # ----------------------------------------------------
-            
-            with col2:
-            
-                st.subheader("Orders Over Time")
-            
-                orders_time = (
-                    data.groupby("date")
-                    .size()
-                    .sort_index()
-                )
-            
-                # Convert dates to simple strings
-                date_labels = [
-                    date.strftime("%d %b")
-                    for date in orders_time.index
-                ]
-            
-                fig, ax = plt.subplots(
-                    figsize=(4, 2.5)
-                )
-            
-                ax.plot(
-                    date_labels,
-                    orders_time.values,
-                    marker="o",
-                    linewidth=2,
-                    label="Orders"
-                )
-            
-                # Show values above points
-                for i, value in enumerate(orders_time.values):
-                
-                    ax.text(
-                        i,
-                        value,
-                        str(value),
-                        ha="center",
-                        va="bottom",
-                        fontsize=8
-                    )
-            
-                style_chart(
-                    ax,
-                    "Orders Over Time",
-                    "Number of Orders"
-                )
-            
-                ax.tick_params(
-                    axis="x",
-                    rotation=0
-                )
-            
-                plt.tight_layout()
-            
-                st.pyplot(
-                    fig,
-                    use_container_width=True
-                )
-            
-                plt.close(fig)
-
-
-            # ----------------------------------------------------
-            # CHART 6 - REVENUE OVER TIME
-            # ----------------------------------------------------
-            
-            with col3:
-            
-                st.subheader("Revenue Over Time")
-            
-                revenue_time = (
-                    data.groupby("date")["final_price"]
-                    .sum()
-                    .sort_index()
-                )
-            
-                # Convert dates to simple strings
-                date_labels = [
-                    date.strftime("%d %b")
-                    for date in revenue_time.index
-                ]
-            
-                fig, ax = plt.subplots(
-                    figsize=(4, 2.5)
-                )
-            
-                ax.plot(
-                    date_labels,
-                    revenue_time.values,
-                    marker="o",
-                    linewidth=2,
-                    label="Revenue"
-                )
-            
-                # Show revenue values above points
-                for i, value in enumerate(revenue_time.values):
-                
-                    ax.text(
-                        i,
-                        value,
-                        f"₹{value:,.0f}",
-                        ha="center",
-                        va="bottom",
-                        fontsize=7
-                    )
-            
-                style_chart(
-                    ax,
-                    "Revenue Over Time",
-                    "Revenue (₹)"
-                )
-            
-                ax.tick_params(
-                    axis="x",
-                    rotation=0
-                )
-            
-                plt.tight_layout()
-            
-                st.pyplot(
-                    fig,
-                    use_container_width=True
-                )
-            
-                plt.close(fig)
-
-        # ====================================================
-        # ROW 3
-        # ====================================================
-
-        col1, col2, col3 = st.columns(3)
-
+            ax.set_xlabel("Number of orders", color=MUTED, fontsize=9)
+            analytics_style(ax, "Orders by Operating System", "")
+            ax.grid(axis="x", linestyle="--", linewidth=0.7, alpha=0.3, color=GRID)
+            ax.grid(axis="y", visible=False)
+            finish_chart(fig)
 
         # ----------------------------------------------------
-        # CHART 7 - ORDER PRICE DISTRIBUTION
-        # ----------------------------------------------------
-
-        with col1:
-
-            st.subheader(
-                "Order Price Distribution"
-            )
-
-
-            fig, ax = plt.subplots(figsize=(4, 2.8))
-
-            ax.hist(
-                data["final_price"],
-                bins=8,
-                alpha=0.8,
-                label="Orders"
-            )
-
-            style_chart(
-                ax,
-                "Order Price Distribution",
-                "Number of Orders"
-            )
-
-            ax.set_xlabel(
-                "Order Price (₹)",
-                fontsize=9
-            )
-
-            plt.tight_layout()
-
-            st.pyplot(
-                fig,
-                use_container_width=True
-            )
-
-            plt.close(fig)
-
-
-        # ----------------------------------------------------
-        # CHART 8 - AVERAGE PRICE BY DEVICE
+        # CHART 4 - REVENUE SHARE BY OS
         # ----------------------------------------------------
 
         with col2:
-
-            st.subheader(
-                "Average Price by Device"
+            os_revenue = (
+                data.groupby("operating_system")["final_price"]
+                .sum()
+                .sort_values(ascending=False)
             )
 
+            fig, ax = plt.subplots(figsize=(7, 4))
+            pie_colors = [BLUE, PURPLE, TEAL, ORANGE, RED, GREEN]
 
+            wedges, _, autotexts = ax.pie(
+                os_revenue.values,
+                autopct=lambda p: f"{p:.0f}%" if p >= 4 else "",
+                startangle=90,
+                counterclock=False,
+                colors=pie_colors[:len(os_revenue)],
+                wedgeprops={"width": 0.42, "edgecolor": CHART_BG, "linewidth": 2},
+                pctdistance=0.78,
+            )
+
+            for text in autotexts:
+                text.set_color(TEXT)
+                text.set_fontsize(9)
+                text.set_fontweight("bold")
+
+            legend_labels = [
+                f"{name} — {rupee_short(value)}"
+                for name, value in os_revenue.items()
+            ]
+            ax.legend(
+                wedges,
+                legend_labels,
+                title="Revenue",
+                loc="center left",
+                bbox_to_anchor=(0.98, 0.5),
+                fontsize=8,
+                title_fontsize=9,
+                frameon=False,
+                labelcolor=TEXT,
+            )
+            ax.set_title(
+                "Revenue Share by Operating System",
+                fontsize=13,
+                fontweight="bold",
+                color=TEXT,
+                loc="left",
+                pad=12,
+            )
+            ax.set_facecolor(CHART_BG)
+            finish_chart(fig)
+
+        st.divider()
+
+        # ====================================================
+        # ROW 3 — BUSINESS TRENDS
+        # ====================================================
+
+        st.subheader("📈 Business Trends")
+        col1, col2 = st.columns(2, gap="large")
+
+        # ----------------------------------------------------
+        # CHART 5 - ORDERS OVER TIME
+        # ----------------------------------------------------
+
+        with col1:
+            orders_time = data.groupby("date").size().sort_index()
+
+            fig, ax = plt.subplots(figsize=(7, 4))
+            ax.plot(
+                orders_time.index,
+                orders_time.values,
+                marker="o",
+                markersize=5,
+                linewidth=2.5,
+                color=BLUE,
+            )
+            ax.fill_between(
+                orders_time.index,
+                orders_time.values,
+                alpha=0.12,
+                color=BLUE,
+            )
+
+            for date, value in orders_time.items():
+                ax.annotate(
+                    str(int(value)),
+                    (date, value),
+                    textcoords="offset points",
+                    xytext=(0, 8),
+                    ha="center",
+                    fontsize=8,
+                    color=TEXT,
+                )
+
+            analytics_style(ax, "Orders Over Time", "Orders")
+            ax.xaxis.set_major_locator(mdates.AutoDateLocator())
+            ax.xaxis.set_major_formatter(mdates.DateFormatter("%d %b"))
+            ax.tick_params(axis="x", rotation=30)
+            ax.grid(axis="x", visible=False)
+            finish_chart(fig)
+
+        # ----------------------------------------------------
+        # CHART 6 - REVENUE OVER TIME
+        # ----------------------------------------------------
+
+        with col2:
+            revenue_time = data.groupby("date")["final_price"].sum().sort_index()
+
+            fig, ax = plt.subplots(figsize=(7, 4))
+            ax.plot(
+                revenue_time.index,
+                revenue_time.values,
+                marker="o",
+                markersize=5,
+                linewidth=2.5,
+                color=ORANGE,
+            )
+            ax.fill_between(
+                revenue_time.index,
+                revenue_time.values,
+                alpha=0.12,
+                color=ORANGE,
+            )
+
+            analytics_style(ax, "Revenue Over Time", "Revenue")
+            ax.xaxis.set_major_locator(mdates.AutoDateLocator())
+            ax.xaxis.set_major_formatter(mdates.DateFormatter("%d %b"))
+            ax.tick_params(axis="x", rotation=30)
+            ax.grid(axis="x", visible=False)
+            ax.yaxis.set_major_formatter(
+                plt.FuncFormatter(lambda x, pos: rupee_short(x))
+            )
+            finish_chart(fig)
+
+        st.divider()
+
+        # ====================================================
+        # ROW 4 — ORDER VALUE INSIGHTS
+        # ====================================================
+
+        st.subheader("💰 Order Value Insights")
+        col1, col2 = st.columns(2, gap="large")
+
+        # ----------------------------------------------------
+        # CHART 7 - ORDER VALUE DISTRIBUTION
+        # ----------------------------------------------------
+
+        with col1:
+            fig, ax = plt.subplots(figsize=(7, 4))
+            ax.hist(
+                data["final_price"],
+                bins=min(10, max(4, total_orders)),
+                color=PURPLE,
+                alpha=0.85,
+                edgecolor=CHART_BG,
+                linewidth=1.2,
+            )
+
+            ax.axvline(
+                average_order_value,
+                color=ORANGE,
+                linewidth=2,
+                linestyle="--",
+                label=f"Average: {rupee_short(average_order_value)}",
+            )
+            ax.legend(frameon=False, fontsize=9, labelcolor=TEXT)
+            ax.xaxis.set_major_formatter(
+                plt.FuncFormatter(lambda x, pos: rupee_short(x))
+            )
+            ax.set_xlabel("Order value", color=MUTED, fontsize=9)
+            analytics_style(ax, "Order Value Distribution", "Number of Orders")
+            finish_chart(fig)
+
+        # ----------------------------------------------------
+        # CHART 8 - AVERAGE ORDER VALUE BY DEVICE
+        # ----------------------------------------------------
+
+        with col2:
             average_device_price = (
                 data.groupby("device_type")["final_price"]
                 .mean()
+                .sort_values()
             )
 
-            fig, ax = plt.subplots(figsize=(4, 2.8))
-
-            bars = ax.bar(
+            fig, ax = plt.subplots(figsize=(7, 4))
+            bars = ax.barh(
                 average_device_price.index,
                 average_device_price.values,
-                label="Average Price"
+                color=PURPLE,
+                height=0.55,
             )
 
             ax.bar_label(
                 bars,
-                labels=[
-                    f"₹{value:,.0f}"
-                    for value in average_device_price.values
-                ],
-                padding=3,
-                fontsize=7
+                labels=[rupee_short(v) for v in average_device_price.values],
+                padding=5,
+                fontsize=9,
+                color=TEXT,
             )
+            ax.set_xlabel("Average order value", color=MUTED, fontsize=9)
+            analytics_style(ax, "Average Order Value by Device", "")
+            ax.grid(axis="x", linestyle="--", linewidth=0.7, alpha=0.3, color=GRID)
+            ax.grid(axis="y", visible=False)
+            finish_chart(fig)
 
-            style_chart(
-                ax,
-                "Average Price by Device",
-                "Average Price (₹)"
-            )
-
-            plt.tight_layout()
-
-            st.pyplot(
-                fig,
-                use_container_width=True
-            )
-
-            plt.close(fig)
-
-
-
-        # ----------------------------------------------------
-        # CHART 9 - AVERAGE PRICE BY OS
-        # ----------------------------------------------------
-
-        with col3:
-
-            st.subheader(
-                "Average Price by OS"
-            )
-
-
-
-            average_os_price = (
-                data.groupby("operating_system")["final_price"]
-                .mean()
-            )
-
-            fig, ax = plt.subplots(figsize=(4, 2.8))
-
-            bars = ax.bar(
-                average_os_price.index,
-                average_os_price.values,
-                label="Average Price"
-            )
-
-            ax.bar_label(
-                bars,
-                labels=[
-                    f"₹{value:,.0f}"
-                    for value in average_os_price.values
-                ],
-                padding=3,
-                fontsize=7
-            )
-
-            style_chart(
-                ax,
-                "Average Price by Operating System",
-                "Average Price (₹)"
-            )
-
-            ax.tick_params(
-                axis="x",
-                rotation=20
-            )
-
-            plt.tight_layout()
-
-            st.pyplot(
-                fig,
-                use_container_width=True
-            )
-
-            plt.close(fig)
-
+        st.caption(
+            "Tip: horizontal bars make category comparisons easier, while the line charts show how orders and revenue change over time."
+        )
 
 
 # ============================================================
 # USER HOME / DASHBOARD
 # ============================================================
 
+
+# ============================================================
+
 elif page == "Home":
+
+    render_offers_section()
 
     st.markdown(
         f"""
@@ -2624,6 +2602,8 @@ elif page == "Home":
 # ============================================================
 
 elif page == "PC Configurator":
+
+    render_offers_section()
 
     st.title("PC Configurator")
 
@@ -3221,9 +3201,18 @@ elif page == "PC Configurator":
                     f"**Items: {len(st.session_state.cart)}**"
                 )
 
-                st.markdown(
-                    f"### Total: ₹{get_cart_total():,.2f}"
-                )
+                cart_subtotal, cart_discount, cart_final, cart_discount_percent, cart_offer = get_discounted_cart_totals()
+
+                st.markdown(f"**Subtotal:** ₹{cart_subtotal:,.2f}")
+                if cart_discount_percent > 0:
+                    st.success(
+                        f"🎉 {cart_offer} | You save ₹{cart_discount:,.2f}"
+                    )
+                    st.markdown(f"**Discount:** {cart_discount_percent:.0f}%")
+                    st.markdown(f"### Final Price: ₹{cart_final:,.2f}")
+                else:
+                    st.info("Add another compatible component or accessory to unlock an automatic discount.")
+                    st.markdown(f"### Total: ₹{cart_final:,.2f}")
 
                 cart_os = st.session_state.get(
                     "cart_operating_system",
@@ -3283,7 +3272,7 @@ elif page == "PC Configurator":
                             accessory_items
                         )
 
-                        cart_total = get_cart_total()
+                        cart_subtotal, cart_discount, cart_final, _, _ = get_discounted_cart_totals()
 
                         order_date = datetime.now().strftime(
                             "%Y-%m-%d %H:%M:%S"
@@ -3295,9 +3284,9 @@ elif page == "PC Configurator":
                             operating_system=cart_os,
                             configuration=configuration_text,
                             accessories=accessories_text,
-                            subtotal=cart_total,
-                            discount=0,
-                            final_price=cart_total,
+                            subtotal=cart_subtotal,
+                            discount=cart_discount,
+                            final_price=cart_final,
                             order_date=order_date
                         )
 
@@ -3333,6 +3322,8 @@ elif page == "PC Configurator":
 # ============================================================
 
 elif page == "Mobile Configurator":
+
+    render_offers_section()
 
     # A cart belongs to the currently active device builder.
     # Switching from PC to Mobile starts a fresh mobile cart.
@@ -3792,11 +3783,18 @@ elif page == "Mobile Configurator":
                     f"**Items: {len(st.session_state.cart)}**"
                 )
 
-                mobile_cart_total = get_cart_total()
+                mobile_cart_subtotal, mobile_cart_discount, mobile_cart_final, mobile_discount_percent, mobile_offer = get_discounted_cart_totals()
 
-                st.markdown(
-                    f"### Total: ₹{mobile_cart_total:,.2f}"
-                )
+                st.markdown(f"**Subtotal:** ₹{mobile_cart_subtotal:,.2f}")
+                if mobile_discount_percent > 0:
+                    st.success(
+                        f"🎉 {mobile_offer} | You save ₹{mobile_cart_discount:,.2f}"
+                    )
+                    st.markdown(f"**Discount:** {mobile_discount_percent:.0f}%")
+                    st.markdown(f"### Final Price: ₹{mobile_cart_final:,.2f}")
+                else:
+                    st.info("Add another smartphone component or accessory to unlock an automatic discount.")
+                    st.markdown(f"### Total: ₹{mobile_cart_final:,.2f}")
 
                 mobile_cart_os = st.session_state.get(
                     "cart_operating_system",
@@ -3853,7 +3851,7 @@ elif page == "Mobile Configurator":
                             accessory_items
                         )
 
-                        mobile_cart_total = get_cart_total()
+                        mobile_cart_subtotal, mobile_cart_discount, mobile_cart_final, _, _ = get_discounted_cart_totals()
 
                         order_date = datetime.now().strftime(
                             "%Y-%m-%d %H:%M:%S"
@@ -3865,9 +3863,9 @@ elif page == "Mobile Configurator":
                             operating_system=mobile_cart_os,
                             configuration=configuration_text,
                             accessories=accessories_text,
-                            subtotal=mobile_cart_total,
-                            discount=0,
-                            final_price=mobile_cart_total,
+                            subtotal=mobile_cart_subtotal,
+                            discount=mobile_cart_discount,
+                            final_price=mobile_cart_final,
                             order_date=order_date
                         )
 
