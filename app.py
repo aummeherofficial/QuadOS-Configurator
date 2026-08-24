@@ -27,8 +27,10 @@ from database import (
     get_all_orders,
     delete_order,
     get_user_order_count,
+    get_user_by_id,
     create_order,
     cancel_order,
+    update_order_status,
     get_user_orders,
     get_all_orders_with_users,
     verify_password_reset_user,
@@ -85,7 +87,14 @@ from config import (
 
 from pricing import calculate_pc_price
 from market_pricing import market_price, calculate_bundle_discount
-from email_service import send_order_confirmation_email, get_latest_order_id
+from email_service import (
+    send_order_confirmation_email,
+    get_latest_order_id,
+    send_welcome_email,
+    send_order_status_email,
+    send_order_cancellation_emails,
+    send_password_reset_email,
+)
 
 from query_database import (
     create_query_table,
@@ -1518,8 +1527,15 @@ if not st.session_state.logged_in:
                 )
 
                 if success:
+                    welcome_ok, welcome_message = send_welcome_email(
+                        email.strip(),
+                        name.strip()
+                    )
                     st.success("Account created successfully.")
-                    st.info("You can now login with your account.")
+                    if welcome_ok:
+                        st.info("Welcome email sent to your registered email address.")
+                    else:
+                        st.info("Account created. The welcome email could not be sent, but you can still login.")
                 else:
                     st.error("This email is already registered.")
 
@@ -1592,7 +1608,15 @@ if not st.session_state.logged_in:
                         )
 
                         if changed:
+                            password_email_ok, password_email_message = send_password_reset_email(
+                                reset_email,
+                                (get_user_by_id(verified_user[0]) or [None, "Customer"])[1]
+                            )
                             st.success("Password reset successfully. You can now login.")
+                            if password_email_ok:
+                                st.info("Password reset confirmation email sent to your registered email.")
+                            else:
+                                st.warning("Password was reset, but the confirmation email could not be sent.")
                         else:
                             st.error("Password could not be reset. Please try again.")
 
@@ -2565,6 +2589,54 @@ elif page == "Manage Orders":
             if accessories
             else "No accessories"
         )
+
+        # ----------------------------------------------------
+        # UPDATE ORDER STATUS
+        # ----------------------------------------------------
+
+        st.divider()
+        st.subheader("Update Order Status")
+        status_options = [
+            "Placed",
+            "Confirmed",
+            "In Progress",
+            "Payment Pending",
+            "Completed",
+            "Cancelled",
+        ]
+        current_status = status if status in status_options else "Placed"
+        status_index = status_options.index(current_status)
+        selected_status = st.selectbox(
+            "Order Status",
+            status_options,
+            index=status_index,
+            key=f"admin_order_status_{order_id}",
+            help="Changing this status sends an email notification to the customer."
+        )
+
+        if st.button(
+            "Update Order Status",
+            key=f"update_admin_order_status_{order_id}",
+            type="primary",
+            use_container_width=True
+        ):
+            if selected_status == current_status:
+                st.info("The order is already using this status.")
+            elif update_order_status(order_id, selected_status):
+                email_ok, email_message = send_order_status_email(
+                    customer_email,
+                    customer_name,
+                    order_id,
+                    selected_status,
+                )
+                st.success(f"Order #{order_id} status changed to {selected_status}.")
+                if email_ok:
+                    st.info("Customer status notification email sent.")
+                else:
+                    st.warning(f"Status updated, but the customer email could not be sent: {email_message}")
+                st.rerun()
+            else:
+                st.error("Unable to update the order status.")
 
         # ----------------------------------------------------
         # DELETE ORDER
@@ -4632,11 +4704,23 @@ elif page == "My Orders":
                 )
 
                 if cancelled:
+                    cancelled_order = next(
+                        (o for o in get_all_orders_with_users() if o[0] == selected_cancel_order_id),
+                        None
+                    )
+                    if cancelled_order:
+                        send_order_cancellation_emails(
+                            cancelled_order[2],
+                            cancelled_order[1],
+                            cancelled_order[0],
+                            cancelled_order[3],
+                            cancelled_order[8],
+                        )
 
                     st.success(
                         f"Order #{selected_cancel_order_id} has been cancelled successfully."
                     )
-
+                    st.info("Cancellation notifications were sent to the customer and admin when email is configured.")
                     st.rerun()
 
                 else:

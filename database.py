@@ -799,6 +799,25 @@ def create_order(
 # CANCEL USER ORDER
 # ============================================================
 
+def update_order_status(order_id, status):
+    """Update an order status from the admin panel."""
+    allowed = {"Placed", "Confirmed", "In Progress", "Completed", "Payment Pending", "Cancelled"}
+    if status not in allowed:
+        return False
+
+    connection = get_connection()
+    cursor = connection.cursor()
+    cursor.execute("""
+        UPDATE orders
+        SET status = ?
+        WHERE id = ?
+    """, (status, order_id))
+    changed = cursor.rowcount > 0
+    connection.commit()
+    connection.close()
+    return changed
+
+
 def cancel_order(user_id, order_id):
 
     connection = get_connection()

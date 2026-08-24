@@ -1,5 +1,7 @@
 import streamlit as st
 
+from email_service import send_new_query_admin_email, send_query_reply_email
+
 from query_database import (
     create_user_query,
     get_user_queries,
@@ -52,6 +54,15 @@ def render_user_help_queries(current_user):
                     user_email,
                     subject,
                     question
+                )
+                submitted_at = __import__("datetime").datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                send_new_query_admin_email(
+                    query_id,
+                    user_name,
+                    user_email,
+                    subject,
+                    question,
+                    submitted_at,
                 )
                 st.success(f"Query #{query_id} sent successfully.")
                 st.rerun()
@@ -237,6 +248,13 @@ def render_admin_queries(current_user):
                         current_user[0],
                         current_user[1],
                         reply
+                    )
+                    send_query_reply_email(
+                        details[3],
+                        details[2],
+                        selected_query_id,
+                        details[4],
+                        reply,
                     )
                     st.success("Reply sent to user.")
                     st.rerun()
