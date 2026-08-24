@@ -3856,6 +3856,9 @@ elif page == "PC Configurator":
                             "%Y-%m-%d %H:%M:%S"
                         )
 
+                        # Snapshot cart items BEFORE creating the order or clearing the cart.
+                        email_order_items = [dict(item) for item in st.session_state.cart]
+
                         create_order(
                             user_id=user_id,
                             device_type="PC",
@@ -3880,7 +3883,8 @@ elif page == "PC Configurator":
                             subtotal=cart_subtotal,
                             discount=cart_discount,
                             final_price=cart_final,
-                            order_date=order_date
+                            order_date=order_date,
+                            order_items=email_order_items
                         )
 
                         st.session_state.order_success_message = (
@@ -4467,6 +4471,9 @@ elif page == "Mobile Configurator":
                             "%Y-%m-%d %H:%M:%S"
                         )
 
+                        # Snapshot cart items BEFORE creating the order or clearing the cart.
+                        email_order_items = [dict(item) for item in st.session_state.cart]
+
                         create_order(
                             user_id=user_id,
                             device_type="Mobile",
@@ -4491,7 +4498,8 @@ elif page == "Mobile Configurator":
                             subtotal=mobile_cart_subtotal,
                             discount=mobile_cart_discount,
                             final_price=mobile_cart_final,
-                            order_date=order_date
+                            order_date=order_date,
+                            order_items=email_order_items
                         )
 
                         st.session_state.order_success_message = (
