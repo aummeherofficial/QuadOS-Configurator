@@ -1,18 +1,17 @@
 """QuadOS market-style pricing and automatic bundle discounts.
 
 The project keeps its product/configuration dictionaries in config.py.
-This module applies a modest market-price adjustment at checkout/display and
-calculates the best eligible bundle offer. Prices are a project pricing model,
-not a live retailer feed.
+This module displays the configured Indian market-oriented retail prices and
+calculates the best eligible bundle offer. Prices are representative catalogue
+prices, not a live retailer feed.
 """
 
 from __future__ import annotations
 
 from typing import Iterable, Mapping, Tuple
 
-# 10% lower than the original project list prices gives a more competitive
-# retail-style baseline without making premium components unrealistically cheap.
-MARKET_PRICE_FACTOR = 0.90
+# Keep configured prices as the displayed/checkout prices.
+MARKET_PRICE_FACTOR = 1.00
 
 # Round displayed/checkout prices to normal retail increments.
 ROUND_TO = 100

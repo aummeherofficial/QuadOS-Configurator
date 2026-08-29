@@ -3,101 +3,118 @@
 # ============================================================
 
 CPU_OPTIONS = {
-    "Intel Core i3": 10000,
-    "Intel Core i5": 16000,
-    "Intel Core i7": 25000,
-    "Intel Core i9": 40000,
-    "AMD Ryzen 5": 14000,
-    "AMD Ryzen 7": 22000,
-    "AMD Ryzen 9": 35000
+    # Intel
+    "Intel Core i3-12100F": 8500,
+    "Intel Core i5-12400F": 12500,
+    "Intel Core i5-14400F": 18000,
+    "Intel Core i7-14700F": 33000,
+    "Intel Core i9-14900KF": 47360,
+    # AMD
+    "AMD Ryzen 5 5500": 9000,
+    "AMD Ryzen 5 7500F": 15250,
+    "AMD Ryzen 5 7600X": 22000,
+    "AMD Ryzen 7 7800X3D": 40000,
+    "AMD Ryzen 7 9800X3D": 46500,
 }
-
 
 MOTHERBOARD_OPTIONS = {
-    "Basic Motherboard": 7000,
-    "Mid Range Motherboard": 12000,
-    "High End Motherboard": 20000
+    # Intel LGA1700
+    "MSI PRO H610M-E (Intel)": 6500,
+    "MSI PRO B760M-A WIFI (Intel)": 14500,
+    "MSI MAG B760 TOMAHAWK WIFI (Intel)": 21000,
+    "MSI PRO Z790-A MAX WIFI (Intel)": 28000,
+    # AMD AM4 / AM5
+    "MSI B550M-A PRO (AMD AM4)": 6150,
+    "MSI B550 PRO-VDH WIFI (AMD AM4)": 10200,
+    "Gigabyte B650M Gaming WIFI (AMD AM5)": 9300,
+    "Gigabyte B650 Gaming X AX V2 (AMD AM5)": 14100,
+    "MSI MPG B650 Edge WIFI (AMD AM5)": 21950,
+    "Gigabyte B850M Force WIFI6E (AMD AM5)": 14300,
 }
-
 
 RAM_OPTIONS = {
-    "8 GB": 3000,
-    "16 GB": 6000,
-    "32 GB": 11000,
-    "64 GB": 20000
+    "8 GB DDR4-3200": 6000,
+    "16 GB DDR4-3200": 12000,
+    "32 GB DDR4-3200 (16GB x2)": 25000,
+    "16 GB DDR5-5200": 18000,
+    "32 GB DDR5-5600 (16GB x2)": 36000,
+    "32 GB DDR5-6000 (16GB x2)": 40000,
+    "64 GB DDR5-6000 (32GB x2)": 65000,
 }
-
 
 GPU_OPTIONS = {
     "Integrated Graphics": 0,
-    "NVIDIA RTX 3050": 20000,
-    "NVIDIA RTX 4060": 30000,
-    "NVIDIA RTX 4070": 55000,
-    "NVIDIA RTX 4080": 90000
+    "NVIDIA GeForce RTX 4060 8GB": 33500,
+    "NVIDIA GeForce RTX 5060 8GB": 33500,
+    "AMD Radeon RX 9060 XT 8GB": 30000,
+    "AMD Radeon RX 9060 XT 16GB": 35000,
+    "AMD Radeon RX 9070 16GB": 70000,
+    "AMD Radeon RX 9070 XT 16GB": 81000,
 }
-
 
 STORAGE_OPTIONS = {
-    "512 GB SSD": 4000,
-    "1 TB SSD": 7000,
-    "2 TB SSD": 13000,
-    "4 TB SSD": 25000
+    "500 GB NVMe SSD": 6500,
+    "1 TB NVMe SSD": 15000,
+    "2 TB NVMe SSD": 29000,
+    "4 TB NVMe SSD": 55000,
+    "1 TB SATA SSD": 8500,
+    "2 TB HDD 7200RPM": 7000,
+    "4 TB HDD 7200RPM": 10500,
 }
-
 
 POWER_SUPPLY_OPTIONS = {
-    "450W": 3500,
-    "550W": 4500,
-    "650W": 6000,
-    "750W": 8000,
-    "850W": 11000
+    "550W 80+ Bronze": 4000,
+    "650W 80+ Bronze": 4500,
+    "750W 80+ Gold": 9600,
+    "850W 80+ Gold": 11000,
+    "1000W 80+ Gold": 15000,
 }
-
 
 COOLING_OPTIONS = {
     "Stock Air Cooling": 0,
-    "Air Cooler": 3000,
-    "Tower Cooler": 5000,
-    "Liquid Cooling": 10000
+    "DeepCool AK400 Air Cooler": 4700,
+    "DeepCool AG620 Dual-Tower Cooler": 6500,
+    "DeepCool LE240 AIO": 5600,
+    "DeepCool LE360 AIO": 7500,
 }
-
 
 CABINET_OPTIONS = {
-    "Basic Cabinet": 3000,
-    "Mid Range Cabinet": 6000,
-    "Premium Cabinet": 12000
+    "Ant Esports ICE-211TG": 2900,
+    "Ant Esports Crystal X7": 5100,
+    "MSI MAG Forge 320R": 5600,
+    "Lian Li Vector V100": 8000,
+    "Lian Li Lancool 216": 10500,
 }
-
 
 MONITOR_OPTIONS = {
     "No Monitor": 0,
-    "22 inch Full HD": 7000,
-    "24 inch Full HD": 10000,
-    "27 inch Full HD": 14000,
-    "27 inch 2K": 22000,
-    "32 inch 4K": 35000
+    "AOC 22B15H2 22-inch FHD 120Hz": 9000,
+    "LG 24-inch FHD IPS": 11000,
+    "MSI 27-inch FHD 180Hz": 13000,
+    "MSI MAG 275QF 27-inch QHD 180Hz": 15100,
+    "Gigabyte GS27QA 27-inch QHD 180Hz": 18000,
+    "32-inch 4K IPS": 30000,
 }
-
 
 KEYBOARD_OPTIONS = {
     "No Keyboard": 0,
-    "Basic Keyboard": 1000,
-    "Mechanical Keyboard": 3000,
-    "Premium Mechanical Keyboard": 6000
+    "Basic USB Keyboard": 900,
+    "Ant Esports Mechanical Keyboard": 1500,
+    "Royal Kludge M75 Mechanical Keyboard": 8500,
+    "Premium Wireless Mechanical Keyboard": 12000,
 }
-
 
 MOUSE_OPTIONS = {
     "No Mouse": 0,
-    "Basic Mouse": 500,
-    "Gaming Mouse": 2000,
-    "Premium Gaming Mouse": 4000
+    "Logitech G102/G203": 1500,
+    "Razer Orochi V2": 4000,
+    "Gaming Mouse": 2500,
+    "Premium Gaming Mouse": 5000,
 }
 
 
-
 # ============================================================
-# ACCESSORIES
+# PC ACCESSORIES
 # ============================================================
 
 ACCESSORY_OPTIONS = {
@@ -109,16 +126,18 @@ ACCESSORY_OPTIONS = {
     "Mouse": 1000,
     "Webcam": 2500,
     "USB Hub": 1200,
-    "Wi-Fi Adapter": 1000,
-    "Bluetooth Adapter": 800
+    "Wi-Fi 6E Adapter": 2500,
+    "Bluetooth Adapter": 800,
+    "2TB External HDD": 7000,
+    "UPS 600VA": 3500,
+    "UPS 1100VA": 6000,
+    "2.1 Channel Speakers": 2500,
+    "USB Condenser Microphone": 3500,
+    "1080p Streaming Webcam": 4500,
+    "Capture Card 1080p": 6000,
+    "ARGB Case Fan Pack": 1800,
+    "Mechanical Keyboard + Mouse Combo": 3000,
 }
-
-
-
-
-
-
-
 
 
 # ============================================================

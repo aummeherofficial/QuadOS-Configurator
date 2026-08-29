@@ -27,10 +27,8 @@ from database import (
     get_all_orders,
     delete_order,
     get_user_order_count,
-    get_user_by_id,
     create_order,
     cancel_order,
-    update_order_status,
     get_user_orders,
     get_all_orders_with_users,
     verify_password_reset_user,
@@ -87,14 +85,7 @@ from config import (
 
 from pricing import calculate_pc_price
 from market_pricing import market_price, calculate_bundle_discount
-from email_service import (
-    send_order_confirmation_email,
-    get_latest_order_id,
-    send_welcome_email,
-    send_order_status_email,
-    send_order_cancellation_emails,
-    send_password_reset_email,
-)
+from email_service import send_order_confirmation_email, get_latest_order_id
 
 from query_database import (
     create_query_table,
@@ -478,6 +469,7 @@ PROFILE_OPTIONS = [
 ]
 
 PC_PROFILE_OPTIONS = [
+    "Custom Build (Start Empty)",
     "Balanced / Everyday",
     "Gaming",
     "Office & Productivity",
@@ -490,6 +482,7 @@ PC_PROFILE_OPTIONS = [
 ]
 
 MOBILE_PROFILE_OPTIONS = [
+    "Custom Build (Start Empty)",
     "Balanced / Everyday",
     "Gaming",
     "Multimedia & Streaming",
@@ -503,10 +496,10 @@ MOBILE_PROFILE_OPTIONS = [
 PC_PROFILE_CONFIGS = {
     "Balanced / Everyday": {
         "Windows PC": {
-            "pc_cpu": "Intel Core i5", "pc_motherboard": "Mid Range Motherboard",
-            "pc_ram": "16 GB", "pc_gpu": "Integrated Graphics", "pc_storage": "1 TB SSD",
-            "pc_power_supply": "650W", "pc_cooling": "Air Cooler", "pc_cabinet": "Mid Range Cabinet",
-            "pc_monitor": "24 inch Full HD", "pc_keyboard": "Basic Keyboard", "pc_mouse": "Basic Mouse",
+            "pc_cpu": "Intel Core i5-12400F", "pc_motherboard": "MSI PRO B760M-A WIFI (Intel)",
+            "pc_ram": "16 GB DDR4-3200", "pc_gpu": "Integrated Graphics", "pc_storage": "1 TB NVMe SSD",
+            "pc_power_supply": "650W 80+ Bronze", "pc_cooling": "DeepCool AK400 Air Cooler", "pc_cabinet": "Ant Esports Crystal X7",
+            "pc_monitor": "LG 24-inch FHD IPS", "pc_keyboard": "Basic USB Keyboard", "pc_mouse": "Logitech G102/G203",
             "pc_accessories": []
         },
         "macOS": {
@@ -517,10 +510,10 @@ PC_PROFILE_CONFIGS = {
     },
     "Gaming": {
         "Windows PC": {
-            "pc_cpu": "Intel Core i7", "pc_motherboard": "High End Motherboard",
-            "pc_ram": "32 GB", "pc_gpu": "NVIDIA RTX 4060", "pc_storage": "1 TB SSD",
-            "pc_power_supply": "750W", "pc_cooling": "Tower Cooler", "pc_cabinet": "Mid Range Cabinet",
-            "pc_monitor": "27 inch 2K", "pc_keyboard": "Mechanical Keyboard", "pc_mouse": "Gaming Mouse",
+            "pc_cpu": "Intel Core i7-14700F", "pc_motherboard": "MSI MAG B760 TOMAHAWK WIFI (Intel)",
+            "pc_ram": "32 GB DDR5-6000 (16GB x2)", "pc_gpu": "NVIDIA GeForce RTX 4060 8GB", "pc_storage": "1 TB NVMe SSD",
+            "pc_power_supply": "750W 80+ Gold", "pc_cooling": "DeepCool AG620 Dual-Tower Cooler", "pc_cabinet": "MSI MAG Forge 320R",
+            "pc_monitor": "MSI MAG 275QF 27-inch QHD 180Hz", "pc_keyboard": "Ant Esports Mechanical Keyboard", "pc_mouse": "Gaming Mouse",
             "pc_accessories": ["Headphones"]
         },
         "macOS": {
@@ -532,10 +525,10 @@ PC_PROFILE_CONFIGS = {
     },
     "Office & Productivity": {
         "Windows PC": {
-            "pc_cpu": "Intel Core i5", "pc_motherboard": "Basic Motherboard",
-            "pc_ram": "16 GB", "pc_gpu": "Integrated Graphics", "pc_storage": "512 GB SSD",
-            "pc_power_supply": "550W", "pc_cooling": "Stock Air Cooling", "pc_cabinet": "Basic Cabinet",
-            "pc_monitor": "24 inch Full HD", "pc_keyboard": "Basic Keyboard", "pc_mouse": "Basic Mouse",
+            "pc_cpu": "Intel Core i5-12400F", "pc_motherboard": "MSI PRO H610M-E (Intel)",
+            "pc_ram": "16 GB DDR4-3200", "pc_gpu": "Integrated Graphics", "pc_storage": "500 GB NVMe SSD",
+            "pc_power_supply": "550W 80+ Bronze", "pc_cooling": "Stock Air Cooling", "pc_cabinet": "Ant Esports ICE-211TG",
+            "pc_monitor": "LG 24-inch FHD IPS", "pc_keyboard": "Basic USB Keyboard", "pc_mouse": "Logitech G102/G203",
             "pc_accessories": []
         },
         "macOS": {
@@ -547,10 +540,10 @@ PC_PROFILE_CONFIGS = {
     },
     "Coding & Development": {
         "Windows PC": {
-            "pc_cpu": "AMD Ryzen 7", "pc_motherboard": "Mid Range Motherboard",
-            "pc_ram": "32 GB", "pc_gpu": "Integrated Graphics", "pc_storage": "1 TB SSD",
-            "pc_power_supply": "650W", "pc_cooling": "Air Cooler", "pc_cabinet": "Mid Range Cabinet",
-            "pc_monitor": "27 inch 2K", "pc_keyboard": "Mechanical Keyboard", "pc_mouse": "Basic Mouse",
+            "pc_cpu": "AMD Ryzen 7 9800X3D", "pc_motherboard": "Gigabyte B650 Gaming X AX V2 (AMD AM5)",
+            "pc_ram": "32 GB DDR5-5600 (16GB x2)", "pc_gpu": "Integrated Graphics", "pc_storage": "1 TB NVMe SSD",
+            "pc_power_supply": "650W 80+ Bronze", "pc_cooling": "DeepCool AK400 Air Cooler", "pc_cabinet": "Ant Esports Crystal X7",
+            "pc_monitor": "MSI MAG 275QF 27-inch QHD 180Hz", "pc_keyboard": "Ant Esports Mechanical Keyboard", "pc_mouse": "Logitech G102/G203",
             "pc_accessories": []
         },
         "macOS": {
@@ -562,10 +555,10 @@ PC_PROFILE_CONFIGS = {
     },
     "Multimedia & Streaming": {
         "Windows PC": {
-            "pc_cpu": "Intel Core i7", "pc_motherboard": "High End Motherboard",
-            "pc_ram": "32 GB", "pc_gpu": "NVIDIA RTX 4060", "pc_storage": "2 TB SSD",
-            "pc_power_supply": "750W", "pc_cooling": "Tower Cooler", "pc_cabinet": "Premium Cabinet",
-            "pc_monitor": "27 inch 2K", "pc_keyboard": "Mechanical Keyboard", "pc_mouse": "Gaming Mouse",
+            "pc_cpu": "Intel Core i7-14700F", "pc_motherboard": "MSI MAG B760 TOMAHAWK WIFI (Intel)",
+            "pc_ram": "32 GB DDR5-5600 (16GB x2)", "pc_gpu": "NVIDIA GeForce RTX 4060 8GB", "pc_storage": "2 TB NVMe SSD",
+            "pc_power_supply": "750W 80+ Gold", "pc_cooling": "DeepCool AG620 Dual-Tower Cooler", "pc_cabinet": "Lian Li Lancool 216",
+            "pc_monitor": "MSI MAG 275QF 27-inch QHD 180Hz", "pc_keyboard": "Ant Esports Mechanical Keyboard", "pc_mouse": "Gaming Mouse",
             "pc_accessories": ["Webcam", "Headphones"]
         },
         "macOS": {
@@ -577,10 +570,10 @@ PC_PROFILE_CONFIGS = {
     },
     "Video Editing": {
         "Windows PC": {
-            "pc_cpu": "AMD Ryzen 9", "pc_motherboard": "High End Motherboard",
-            "pc_ram": "64 GB", "pc_gpu": "NVIDIA RTX 4070", "pc_storage": "2 TB SSD",
-            "pc_power_supply": "850W", "pc_cooling": "Liquid Cooling", "pc_cabinet": "Premium Cabinet",
-            "pc_monitor": "27 inch 2K", "pc_keyboard": "Mechanical Keyboard", "pc_mouse": "Premium Gaming Mouse",
+            "pc_cpu": "AMD Ryzen 7 9800X3D", "pc_motherboard": "MSI MPG B650 Edge WIFI (AMD AM5)",
+            "pc_ram": "64 GB DDR5-6000 (32GB x2)", "pc_gpu": "AMD Radeon RX 9070 XT 16GB", "pc_storage": "2 TB NVMe SSD",
+            "pc_power_supply": "850W 80+ Gold", "pc_cooling": "DeepCool LE360 AIO", "pc_cabinet": "Lian Li Lancool 216",
+            "pc_monitor": "MSI MAG 275QF 27-inch QHD 180Hz", "pc_keyboard": "Ant Esports Mechanical Keyboard", "pc_mouse": "Premium Gaming Mouse",
             "pc_accessories": ["Webcam"]
         },
         "macOS": {
@@ -592,10 +585,10 @@ PC_PROFILE_CONFIGS = {
     },
     "Creative Design": {
         "Windows PC": {
-            "pc_cpu": "Intel Core i7", "pc_motherboard": "High End Motherboard",
-            "pc_ram": "32 GB", "pc_gpu": "NVIDIA RTX 4060", "pc_storage": "1 TB SSD",
-            "pc_power_supply": "750W", "pc_cooling": "Tower Cooler", "pc_cabinet": "Premium Cabinet",
-            "pc_monitor": "27 inch 2K", "pc_keyboard": "Mechanical Keyboard", "pc_mouse": "Premium Gaming Mouse",
+            "pc_cpu": "Intel Core i7-14700F", "pc_motherboard": "MSI MAG B760 TOMAHAWK WIFI (Intel)",
+            "pc_ram": "32 GB DDR5-6000 (16GB x2)", "pc_gpu": "NVIDIA GeForce RTX 4060 8GB", "pc_storage": "1 TB NVMe SSD",
+            "pc_power_supply": "750W 80+ Gold", "pc_cooling": "DeepCool AG620 Dual-Tower Cooler", "pc_cabinet": "Lian Li Lancool 216",
+            "pc_monitor": "MSI MAG 275QF 27-inch QHD 180Hz", "pc_keyboard": "Ant Esports Mechanical Keyboard", "pc_mouse": "Premium Gaming Mouse",
             "pc_accessories": []
         },
         "macOS": {
@@ -607,10 +600,10 @@ PC_PROFILE_CONFIGS = {
     },
     "Business": {
         "Windows PC": {
-            "pc_cpu": "Intel Core i5", "pc_motherboard": "Basic Motherboard",
-            "pc_ram": "16 GB", "pc_gpu": "Integrated Graphics", "pc_storage": "1 TB SSD",
-            "pc_power_supply": "550W", "pc_cooling": "Stock Air Cooling", "pc_cabinet": "Basic Cabinet",
-            "pc_monitor": "24 inch Full HD", "pc_keyboard": "Basic Keyboard", "pc_mouse": "Basic Mouse",
+            "pc_cpu": "Intel Core i5-12400F", "pc_motherboard": "MSI PRO H610M-E (Intel)",
+            "pc_ram": "16 GB DDR4-3200", "pc_gpu": "Integrated Graphics", "pc_storage": "1 TB NVMe SSD",
+            "pc_power_supply": "550W 80+ Bronze", "pc_cooling": "Stock Air Cooling", "pc_cabinet": "Ant Esports ICE-211TG",
+            "pc_monitor": "LG 24-inch FHD IPS", "pc_keyboard": "Basic USB Keyboard", "pc_mouse": "Logitech G102/G203",
             "pc_accessories": ["Webcam"]
         },
         "macOS": {
@@ -622,10 +615,10 @@ PC_PROFILE_CONFIGS = {
     },
     "Student": {
         "Windows PC": {
-            "pc_cpu": "Intel Core i5", "pc_motherboard": "Basic Motherboard",
-            "pc_ram": "16 GB", "pc_gpu": "Integrated Graphics", "pc_storage": "512 GB SSD",
-            "pc_power_supply": "550W", "pc_cooling": "Stock Air Cooling", "pc_cabinet": "Mid Range Cabinet",
-            "pc_monitor": "24 inch Full HD", "pc_keyboard": "Basic Keyboard", "pc_mouse": "Basic Mouse",
+            "pc_cpu": "Intel Core i5-12400F", "pc_motherboard": "MSI PRO H610M-E (Intel)",
+            "pc_ram": "16 GB DDR4-3200", "pc_gpu": "Integrated Graphics", "pc_storage": "500 GB NVMe SSD",
+            "pc_power_supply": "550W 80+ Bronze", "pc_cooling": "Stock Air Cooling", "pc_cabinet": "MSI MAG Forge 320R",
+            "pc_monitor": "LG 24-inch FHD IPS", "pc_keyboard": "Basic USB Keyboard", "pc_mouse": "Logitech G102/G203",
             "pc_accessories": ["Earphones"]
         },
         "macOS": {
@@ -799,7 +792,7 @@ def apply_pc_profile():
         for key, options in option_groups.items():
             name = config.get(key)
             _set_profile_value(key, options, name)
-            if name in options and name not in ("Integrated Graphics", "No Monitor", "No Keyboard", "No Mouse", "Stock Air Cooling"):
+            if name in options and name not in ("Integrated Graphics", "No Monitor", "No Keyboard", "No Mouse"):
                 category, label = categories[key]
                 add_to_cart(f"{label} - {name}", market_price(options[name]), category=category)
             elif name in options and options[name] > 0:
@@ -888,18 +881,57 @@ def apply_mobile_profile():
         if name in accessory_options:
             add_to_cart("Accessory - " + name, market_price(accessory_options[name]), category=f"mobile_accessory:{name}")
 
+def reset_pc_component_selections():
+    keys = [
+        "pc_cpu", "pc_motherboard", "pc_ram", "pc_gpu", "pc_storage",
+        "pc_power_supply", "pc_cooling", "pc_cabinet", "pc_monitor",
+        "pc_keyboard", "pc_mouse", "pc_accessories",
+        "mac_cpu", "mac_ram", "mac_storage", "mac_gpu", "mac_display",
+        "mac_keyboard", "mac_mouse", "mac_accessories"
+    ]
+    for key in keys:
+        st.session_state.pop(key, None)
+
+def reset_mobile_component_selections():
+    keys = [
+        "iphone_display", "iphone_battery", "iphone_camera", "iphone_ram",
+        "iphone_storage", "iphone_processor", "iphone_connectivity",
+        "iphone_frame", "iphone_color", "iphone_accessories",
+        "android_display", "android_battery", "android_camera", "android_ram",
+        "android_storage", "android_processor", "android_connectivity",
+        "android_build", "android_color", "android_accessories"
+    ]
+    for key in keys:
+        st.session_state.pop(key, None)
+
 def handle_pc_profile_change():
+    if st.session_state.get("pc_profile") == "Custom Build (Start Empty)":
+        clear_cart()
+        reset_pc_component_selections()
+        st.session_state.cart_device_type = "PC"
+        st.session_state.cart_operating_system = "Windows"
+        return
     apply_pc_profile()
 
 def handle_mobile_profile_change():
+    if st.session_state.get("mobile_profile") == "Custom Build (Start Empty)":
+        clear_cart()
+        reset_mobile_component_selections()
+        st.session_state.cart_device_type = "Mobile"
+        st.session_state.cart_operating_system = "iOS" if st.session_state.get("mobile_platform", "iPhone") == "iPhone" else "Android"
+        return
     apply_mobile_profile()
 
 def reset_profile_for_pc_platform():
-    st.session_state.pc_profile = "Balanced / Everyday"
+    st.session_state.pc_profile = "Custom Build (Start Empty)"
+    clear_cart()
+    reset_pc_component_selections()
     handle_pc_platform_change()
 
 def reset_profile_for_mobile_platform():
-    st.session_state.mobile_profile = "Balanced / Everyday"
+    st.session_state.mobile_profile = "Custom Build (Start Empty)"
+    clear_cart()
+    reset_mobile_component_selections()
     handle_mobile_platform_change()
 
 
@@ -908,176 +940,80 @@ def reset_profile_for_mobile_platform():
 # ============================================================
 
 def validate_order_cart(cart, device_type, operating_system):
-    """
-    Validate that a device order contains enough core components
-    to represent a usable PC/mobile configuration.
-
-    Accessories are allowed to be ordered by themselves.
-    A single non-accessory component is not allowed.
-    """
-
+    """Validate that the cart is a complete and compatible device build."""
     if not cart:
-        return False, "Your cart is empty."
+        return False, "Your cart is empty. Select components before placing the order."
 
-    # Accessories are optional and may be ordered alone.
     non_accessories = [
         item for item in cart
-        if not str(item.get("category", "")).startswith(
-            ("accessory:", "mobile_accessory:")
-        )
+        if not str(item.get("category", "")).startswith(("accessory:", "mobile_accessory:"))
     ]
 
     if not non_accessories:
-        return True, ""
+        return False, "Please select the device components first. Accessories cannot be ordered without a device configuration."
 
-    selected_categories = {
-        item.get("category")
-        for item in non_accessories
-    }
+    selected = {item.get("category") for item in non_accessories}
 
-    # --------------------------------------------------------
-    # WINDOWS PC
-    # --------------------------------------------------------
     if device_type == "PC" and operating_system == "Windows":
-
-        required = {
-            "cpu",
-            "motherboard",
-            "ram",
-            "storage",
-            "power_supply",
-            "cabinet"
+        required = {"cpu", "motherboard", "ram", "storage", "power_supply", "cabinet", "cooling"}
+        missing = required - selected
+        labels = {
+            "cpu":"Processor", "motherboard":"Motherboard", "ram":"RAM",
+            "storage":"Storage", "power_supply":"Power Supply",
+            "cabinet":"Cabinet", "cooling":"Cooling"
         }
-
-        missing = required - selected_categories
-
         if missing:
-            labels = {
-                "cpu": "Processor",
-                "motherboard": "Motherboard",
-                "ram": "RAM",
-                "storage": "Storage",
-                "power_supply": "Power Supply",
-                "cabinet": "Cabinet"
-            }
+            return False, "Complete these required PC components: " + ", ".join(labels[x] for x in required if x in missing) + "."
 
-            missing_names = [
-                labels[item]
-                for item in required
-                if item in missing
-            ]
+        cpu = next((i["name"] for i in non_accessories if i.get("category") == "cpu"), "")
+        board = next((i["name"] for i in non_accessories if i.get("category") == "motherboard"), "")
+        gpu = next((i["name"] for i in non_accessories if i.get("category") == "gpu"), "")
+        psu = next((i["name"] for i in non_accessories if i.get("category") == "power_supply"), "")
 
-            return (
-                False,
-                "A Windows PC order must contain the core components: "
-                + ", ".join(missing_names)
-                + ". You can add GPU, cooling, monitor, keyboard, mouse and accessories optionally."
-            )
+        cpu_is_intel = "Intel" in cpu
+        cpu_is_am4 = any(x in cpu for x in ["Ryzen 5 5500"])
+        cpu_is_am5 = any(x in cpu for x in ["7500F", "7600X", "7800X3D", "9800X3D"])
+        board_is_intel = "(Intel)" in board
+        board_is_am4 = "AM4" in board
+        board_is_am5 = "AM5" in board
 
-    # --------------------------------------------------------
-    # macOS
-    # --------------------------------------------------------
+        if cpu_is_intel and not board_is_intel:
+            return False, "Processor and motherboard are not compatible. Select an Intel motherboard for this Intel processor."
+        if cpu_is_am4 and not board_is_am4:
+            return False, "Processor and motherboard are not compatible. Ryzen 5 5500 requires an AM4 motherboard such as B550."
+        if cpu_is_am5 and not board_is_am5:
+            return False, "Processor and motherboard are not compatible. This Ryzen processor requires an AM5 motherboard such as B650/B850."
+
+        gpu_watts = {
+            "RTX 4060": 550, "RTX 5060": 550, "RX 9060 XT": 550,
+            "RX 9070 16GB": 650, "RX 9070 XT": 750
+        }
+        required_watt = 0
+        for gpu_name, watts in gpu_watts.items():
+            if gpu_name in gpu:
+                required_watt = watts
+                break
+        psu_watt = int(re.search(r"(\d+)W", psu).group(1)) if re.search(r"(\d+)W", psu) else 0
+        if required_watt and psu_watt < required_watt:
+            return False, f"The selected GPU needs at least about {required_watt}W PSU. Please choose a higher-wattage power supply."
+
     elif device_type == "PC" and operating_system == "macOS":
-
-        required = {
-            "processor",
-            "memory",
-            "storage",
-            "display"
-        }
-
-        missing = required - selected_categories
-
+        required = {"processor", "memory", "storage", "display"}
+        missing = required - selected
         if missing:
-            labels = {
-                "processor": "Apple Processor",
-                "memory": "Memory",
-                "storage": "Storage",
-                "display": "Display"
-            }
+            labels = {"processor":"Apple Processor", "memory":"Memory", "storage":"Storage", "display":"Display"}
+            return False, "Complete these required Mac components: " + ", ".join(labels[x] for x in required if x in missing) + "."
 
-            missing_names = [
-                labels[item]
-                for item in required
-                if item in missing
-            ]
-
-            return (
-                False,
-                "A macOS order must contain the core components: "
-                + ", ".join(missing_names)
-                + ". Keyboard, mouse, graphics and accessories are optional."
-            )
-
-    # --------------------------------------------------------
-    # MOBILE
-    # --------------------------------------------------------
     elif device_type == "Mobile":
-
         if operating_system == "iOS":
-
-            required = {
-                "iphone_display",
-                "iphone_battery",
-                "iphone_ram",
-                "iphone_storage",
-                "iphone_processor",
-                "iphone_connectivity"
-            }
-
-            labels = {
-                "iphone_display": "Display",
-                "iphone_battery": "Battery",
-                "iphone_ram": "RAM",
-                "iphone_storage": "Storage",
-                "iphone_processor": "Processor",
-                "iphone_connectivity": "Connectivity"
-            }
-
+            required = {"iphone_display", "iphone_battery", "iphone_camera", "iphone_ram", "iphone_storage", "iphone_processor", "iphone_connectivity", "iphone_frame", "iphone_color"}
+            labels = {"iphone_display":"Display","iphone_battery":"Battery","iphone_camera":"Camera","iphone_ram":"RAM","iphone_storage":"Storage","iphone_processor":"Processor","iphone_connectivity":"Connectivity","iphone_frame":"Frame","iphone_color":"Color"}
         else:
-
-            required = {
-                "android_display",
-                "android_battery",
-                "android_ram",
-                "android_storage",
-                "android_processor",
-                "android_connectivity"
-            }
-
-            labels = {
-                "android_display": "Display",
-                "android_battery": "Battery",
-                "android_ram": "RAM",
-                "android_storage": "Storage",
-                "android_processor": "Processor",
-                "android_connectivity": "Connectivity"
-            }
-
-        missing = required - selected_categories
-
+            required = {"android_display", "android_battery", "android_camera", "android_ram", "android_storage", "android_processor", "android_connectivity", "android_build", "android_color"}
+            labels = {"android_display":"Display","android_battery":"Battery","android_camera":"Camera","android_ram":"RAM","android_storage":"Storage","android_processor":"Processor","android_connectivity":"Connectivity","android_build":"Build Material","android_color":"Color"}
+        missing = required - selected
         if missing:
-            missing_names = [
-                labels[item]
-                for item in required
-                if item in missing
-            ]
-
-            return (
-                False,
-                "A smartphone order must contain the core components: "
-                + ", ".join(missing_names)
-                + ". Camera, build/frame, color and accessories are optional."
-            )
-
-    # --------------------------------------------------------
-    # SAFETY CHECK
-    # --------------------------------------------------------
-    if len(non_accessories) == 1:
-        return (
-            False,
-            "A single device component cannot be ordered by itself. Please build a complete device configuration. Accessories can be ordered separately."
-        )
+            return False, "Complete these required smartphone components: " + ", ".join(labels[x] for x in required if x in missing) + "."
 
     return True, ""
 
@@ -1527,15 +1463,8 @@ if not st.session_state.logged_in:
                 )
 
                 if success:
-                    welcome_ok, welcome_message = send_welcome_email(
-                        email.strip(),
-                        name.strip()
-                    )
                     st.success("Account created successfully.")
-                    if welcome_ok:
-                        st.info("Welcome email sent to your registered email address.")
-                    else:
-                        st.info("Account created. The welcome email could not be sent, but you can still login.")
+                    st.info("You can now login with your account.")
                 else:
                     st.error("This email is already registered.")
 
@@ -1608,15 +1537,7 @@ if not st.session_state.logged_in:
                         )
 
                         if changed:
-                            password_email_ok, password_email_message = send_password_reset_email(
-                                reset_email,
-                                (get_user_by_id(verified_user[0]) or [None, "Customer"])[1]
-                            )
                             st.success("Password reset successfully. You can now login.")
-                            if password_email_ok:
-                                st.info("Password reset confirmation email sent to your registered email.")
-                            else:
-                                st.warning("Password was reset, but the confirmation email could not be sent.")
                         else:
                             st.error("Password could not be reset. Please try again.")
 
@@ -1632,23 +1553,6 @@ user_id = current_user[0]
 user_name = current_user[1]
 user_email = current_user[2]
 user_role = current_user[6]
-
-
-# ============================================================
-# ORDER SUCCESS MESSAGE
-# ============================================================
-
-order_success_message = st.session_state.pop(
-    "order_success_message",
-    None
-)
-
-if order_success_message:
-    st.success(order_success_message)
-
-order_email_status = st.session_state.pop("order_email_status", None)
-if order_email_status and "sent to" not in order_email_status.lower():
-    st.warning(order_email_status)
 
 
 # ============================================================
@@ -1730,6 +1634,25 @@ with st.sidebar:
             ],
             key="user_navigation"
         )
+
+    # Reset configurator state only when entering a configurator page.
+    # Normal widget reruns on the same page keep the current cart intact.
+    _current_config_page = page if page in ("PC Configurator", "Mobile Configurator") else None
+    _previous_config_page = st.session_state.get("last_configurator_page")
+    if _current_config_page != _previous_config_page:
+        if _current_config_page == "PC Configurator":
+            clear_cart()
+            reset_pc_component_selections()
+            st.session_state.pc_profile = "Custom Build (Start Empty)"
+            st.session_state.cart_device_type = "PC"
+            st.session_state.cart_operating_system = "Windows"
+        elif _current_config_page == "Mobile Configurator":
+            clear_cart()
+            reset_mobile_component_selections()
+            st.session_state.mobile_profile = "Custom Build (Start Empty)"
+            st.session_state.cart_device_type = "Mobile"
+            st.session_state.cart_operating_system = "iOS" if st.session_state.get("mobile_platform", "iPhone") == "iPhone" else "Android"
+        st.session_state.last_configurator_page = _current_config_page
 
 
     st.divider()
@@ -2591,54 +2514,6 @@ elif page == "Manage Orders":
         )
 
         # ----------------------------------------------------
-        # UPDATE ORDER STATUS
-        # ----------------------------------------------------
-
-        st.divider()
-        st.subheader("Update Order Status")
-        status_options = [
-            "Placed",
-            "Confirmed",
-            "In Progress",
-            "Payment Pending",
-            "Completed",
-            "Cancelled",
-        ]
-        current_status = status if status in status_options else "Placed"
-        status_index = status_options.index(current_status)
-        selected_status = st.selectbox(
-            "Order Status",
-            status_options,
-            index=status_index,
-            key=f"admin_order_status_{order_id}",
-            help="Changing this status sends an email notification to the customer."
-        )
-
-        if st.button(
-            "Update Order Status",
-            key=f"update_admin_order_status_{order_id}",
-            type="primary",
-            use_container_width=True
-        ):
-            if selected_status == current_status:
-                st.info("The order is already using this status.")
-            elif update_order_status(order_id, selected_status):
-                email_ok, email_message = send_order_status_email(
-                    customer_email,
-                    customer_name,
-                    order_id,
-                    selected_status,
-                )
-                st.success(f"Order #{order_id} status changed to {selected_status}.")
-                if email_ok:
-                    st.info("Customer status notification email sent.")
-                else:
-                    st.warning(f"Status updated, but the customer email could not be sent: {email_message}")
-                st.rerun()
-            else:
-                st.error("Unable to update the order status.")
-
-        # ----------------------------------------------------
         # DELETE ORDER
         # ----------------------------------------------------
 
@@ -2657,7 +2532,7 @@ elif page == "Manage Orders":
 
                 delete_order(order_id)
 
-                st.success(
+                st.session_state["flash_success_message"] = (
                     f"Order #{order_id} deleted successfully."
                 )
 
@@ -3275,8 +3150,7 @@ elif page == "PC Configurator":
         )
 
         if "pc_profile" not in st.session_state:
-            st.session_state.pc_profile = "Balanced / Everyday"
-            apply_pc_profile()
+            st.session_state.pc_profile = "Custom Build (Start Empty)"
 
         st.selectbox(
             "Configuration Profile",
@@ -3286,7 +3160,7 @@ elif page == "PC Configurator":
             help="Choose a use-case and QuadOS will load a suitable starting configuration. You can change every component afterward."
         )
 
-        st.caption("💡 Selecting a profile automatically fills suitable components. You can customize any selection afterward.")
+        st.caption("💡 Start from an empty cart, choose a profile to auto-build, or select components manually. The cart updates instantly.")
 
         # ====================================================
         # WINDOWS PC
@@ -3873,11 +3747,20 @@ elif page == "PC Configurator":
                     f"Platform: PC | OS: {cart_os}"
                 )
 
+                pc_cart_valid, pc_cart_message = validate_order_cart(
+                    st.session_state.cart, "PC", cart_os
+                )
+                if pc_cart_valid:
+                    st.success("✓ Configuration is complete and eligible to place the order.")
+                else:
+                    st.warning(pc_cart_message)
+
                 if st.button(
                     "Place Order",
                     key="place_cart_order",
                     use_container_width=True,
-                    type="primary"
+                    type="primary",
+                    disabled=not pc_cart_valid
                 ):
 
                     valid_order, validation_message = validate_order_cart(
@@ -4030,8 +3913,7 @@ elif page == "Mobile Configurator":
         )
 
         if "mobile_profile" not in st.session_state:
-            st.session_state.mobile_profile = "Balanced / Everyday"
-            apply_mobile_profile()
+            st.session_state.mobile_profile = "Custom Build (Start Empty)"
 
         st.selectbox(
             "Configuration Profile",
@@ -4041,7 +3923,7 @@ elif page == "Mobile Configurator":
             help="Choose a use-case and QuadOS will load a suitable starting configuration. You can change every feature afterward."
         )
 
-        st.caption("💡 Selecting a profile automatically fills suitable features. You can customize any selection afterward.")
+        st.caption("💡 Start from an empty cart, choose a profile to auto-build, or select features manually. The cart updates instantly.")
 
         # ========================================================
         # iPHONE
@@ -4491,11 +4373,20 @@ elif page == "Mobile Configurator":
                     f"Platform: Mobile | OS: {mobile_cart_os}"
                 )
 
+                mobile_cart_valid, mobile_cart_message = validate_order_cart(
+                    st.session_state.cart, "Mobile", mobile_cart_os
+                )
+                if mobile_cart_valid:
+                    st.success("✓ Configuration is complete and eligible to place the order.")
+                else:
+                    st.warning(mobile_cart_message)
+
                 if st.button(
                     "Place Order",
                     key="mobile_cart_place_order",
                     use_container_width=True,
-                    type="primary"
+                    type="primary",
+                    disabled=not mobile_cart_valid
                 ):
 
                     valid_order, validation_message = validate_order_cart(
@@ -4704,23 +4595,11 @@ elif page == "My Orders":
                 )
 
                 if cancelled:
-                    cancelled_order = next(
-                        (o for o in get_all_orders_with_users() if o[0] == selected_cancel_order_id),
-                        None
-                    )
-                    if cancelled_order:
-                        send_order_cancellation_emails(
-                            cancelled_order[2],
-                            cancelled_order[1],
-                            cancelled_order[0],
-                            cancelled_order[3],
-                            cancelled_order[8],
-                        )
 
-                    st.success(
+                    st.session_state["flash_success_message"] = (
                         f"Order #{selected_cancel_order_id} has been cancelled successfully."
                     )
-                    st.info("Cancellation notifications were sent to the customer and admin when email is configured.")
+
                     st.rerun()
 
                 else:
@@ -5211,3 +5090,31 @@ elif page == "About":
     - 🔔 Improved order notifications
     - 💬 Enhanced customer support workflow
     """)
+# ============================================================
+# FLASH SUCCESS / STATUS MESSAGES
+# ============================================================
+# These messages are displayed after the full page content, so
+# order confirmations no longer appear at the top.
+flash_success_message = st.session_state.pop(
+    "flash_success_message",
+    None
+)
+
+if flash_success_message:
+    st.success(flash_success_message)
+
+flash_order_success_message = st.session_state.pop(
+    "order_success_message",
+    None
+)
+
+if flash_order_success_message:
+    st.success(flash_order_success_message)
+
+flash_order_email_status = st.session_state.pop(
+    "order_email_status",
+    None
+)
+
+if flash_order_email_status and "sent to" not in flash_order_email_status.lower():
+    st.warning(flash_order_email_status)
