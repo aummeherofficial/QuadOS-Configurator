@@ -31,6 +31,7 @@ from database import (
     cancel_order,
     get_user_orders,
     get_all_orders_with_users,
+    update_order_status,
     verify_password_reset_user,
     reset_user_password,
     admin_reset_user_password
@@ -85,7 +86,12 @@ from config import (
 
 from pricing import calculate_pc_price
 from market_pricing import market_price, calculate_bundle_discount
-from email_service import send_order_confirmation_email, get_latest_order_id
+from email_service import (
+    send_order_confirmation_email,
+    get_latest_order_id,
+    send_order_status_email,
+    send_order_cancellation_emails,
+)
 
 from query_database import (
     create_query_table,
@@ -109,6 +115,15 @@ from query_ui import (
     render_user_help_queries,
     render_admin_queries
 )
+
+ORDER_STATUS_OPTIONS = [
+    "Placed",
+    "Confirmed",
+    "In Progress",
+    "Payment Pending",
+    "Completed",
+    "Cancelled",
+]
 
 
 
@@ -2143,10 +2158,104 @@ if page == "Admin Dashboard":
     else:
         st.info("No orders have been placed yet.")
 
+    # ========================================================
+    # 6. QUICK ORDER STATUS
+    # ========================================================
+    st.divider()
+    st.subheader("⚡ Quick Order Status")
+    st.caption("Change an order status directly from the dashboard.")
+
+    if all_orders:
+        dashboard_order_options = [
+            f"#{order[0]} — {order[1]} — {order[3]} — ₹{float(order[8] or 0):,.0f}"
+            for order in all_orders
+        ]
+
+        quick_col1, quick_col2, quick_col3 = st.columns([4, 2, 1.2], gap="medium")
+
+        with quick_col1:
+            selected_dashboard_order = st.selectbox(
+                "Order",
+                dashboard_order_options,
+                key="dashboard_quick_status_order",
+            )
+
+        selected_dashboard_index = dashboard_order_options.index(selected_dashboard_order)
+        selected_dashboard_order_data = all_orders[selected_dashboard_index]
+
+        quick_order_id = selected_dashboard_order_data[0]
+        quick_customer_name = selected_dashboard_order_data[1]
+        quick_customer_email = selected_dashboard_order_data[2]
+        quick_device_type = selected_dashboard_order_data[3]
+        quick_final_price = selected_dashboard_order_data[8]
+        quick_current_status = selected_dashboard_order_data[10] or "Placed"
+        if quick_current_status not in ORDER_STATUS_OPTIONS:
+            quick_current_status = "Placed"
+
+        with quick_col2:
+            quick_new_status = st.selectbox(
+                "New Status",
+                ORDER_STATUS_OPTIONS,
+                index=ORDER_STATUS_OPTIONS.index(quick_current_status),
+                key=f"dashboard_quick_status_{quick_order_id}",
+            )
+
+        with quick_col3:
+            st.write("")
+            st.write("")
+            quick_update = st.button(
+                "Update",
+                type="primary",
+                key=f"dashboard_quick_update_{quick_order_id}",
+                use_container_width=True,
+            )
+
+        if quick_update:
+            if quick_new_status == quick_current_status:
+                st.info(f"Order #{quick_order_id} is already marked as {quick_current_status}.")
+            else:
+                quick_updated = update_order_status(quick_order_id, quick_new_status)
+
+                if quick_updated:
+                    if quick_new_status == "Cancelled":
+                        quick_email_ok, quick_email_message = send_order_cancellation_emails(
+                            recipient_email=quick_customer_email,
+                            customer_name=quick_customer_name,
+                            order_id=quick_order_id,
+                            device_type=quick_device_type,
+                            final_price=quick_final_price,
+                        )
+                    else:
+                        quick_email_ok, quick_email_message = send_order_status_email(
+                            recipient_email=quick_customer_email,
+                            customer_name=quick_customer_name,
+                            order_id=quick_order_id,
+                            status=quick_new_status,
+                        )
+
+                    st.session_state["flash_success_message"] = (
+                        f"Order #{quick_order_id} status changed to {quick_new_status}."
+                    )
+
+                    if quick_email_ok:
+                        st.session_state["order_status_email_message"] = (
+                            f"Customer notification sent for Order #{quick_order_id}."
+                        )
+                    else:
+                        st.session_state["order_status_email_message"] = (
+                            f"Order status was updated, but the email could not be sent: {quick_email_message}"
+                        )
+
+                    st.rerun()
+                else:
+                    st.error("Unable to update the order status. Please refresh the dashboard and try again.")
+    else:
+        st.info("There are no orders available for a quick status update.")
+
     st.divider()
 
     # ========================================================
-    # 6. QUICK ADMIN ACTIONS
+    # 7. QUICK ADMIN ACTIONS
     # ========================================================
 
     st.subheader("⚡ Quick Actions")
@@ -2514,29 +2623,133 @@ elif page == "Manage Orders":
         )
 
         # ----------------------------------------------------
-        # DELETE ORDER
+        # UPDATE ORDER STATUS
         # ----------------------------------------------------
 
         st.divider()
+        st.subheader("Update Order Status")
 
+        current_status = status if status in ORDER_STATUS_OPTIONS else "Placed"
+
+        new_status = st.selectbox(
+            "Order Status",
+            ORDER_STATUS_OPTIONS,
+            index=ORDER_STATUS_OPTIONS.index(current_status),
+            key=f"admin_order_status_{order_id}",
+        )
+
+        if st.button(
+            "Update Order Status",
+            type="primary",
+            key=f"update_admin_order_status_{order_id}",
+            use_container_width=True,
+        ):
+            # Do not send duplicate notifications when the admin
+            # saves the same status again.
+            if new_status == current_status:
+                st.info(f"Order #{order_id} is already marked as {current_status}.")
+            else:
+                updated = update_order_status(order_id, new_status)
+
+                if updated:
+                    # The database update is the source of truth.
+                    # Email failure must never undo a successful status update.
+                    if new_status == "Cancelled":
+                        email_ok, email_message = send_order_cancellation_emails(
+                            recipient_email=customer_email,
+                            customer_name=customer_name,
+                            order_id=order_id,
+                            device_type=device_type,
+                            final_price=final_price,
+                        )
+                    else:
+                        email_ok, email_message = send_order_status_email(
+                            recipient_email=customer_email,
+                            customer_name=customer_name,
+                            order_id=order_id,
+                            status=new_status,
+                        )
+
+                    st.session_state["flash_success_message"] = (
+                        f"Order #{order_id} status changed to {new_status}."
+                    )
+
+                    if email_ok:
+                        st.session_state["order_status_email_message"] = (
+                            f"Customer notification sent for Order #{order_id}."
+                        )
+                    else:
+                        st.session_state["order_status_email_message"] = (
+                            f"Order status was updated, but the email could not be sent: "
+                            f"{email_message}"
+                        )
+
+                    st.rerun()
+                else:
+                    st.error(
+                        "Unable to update the order status. "
+                        "Please refresh the page and try again."
+                    )
+
+        # ----------------------------------------------------
+        # DELETE ORDER
+
+        st.divider()
         delete_col, _ = st.columns([1, 3])
 
         with delete_col:
-
             if st.button(
                 "Delete Order",
                 type="primary",
                 key=f"delete_admin_order_{order_id}",
                 use_container_width=True
             ):
+                st.session_state["confirm_delete_order_id"] = order_id
 
-                delete_order(order_id)
+        # ----------------------------------------------------
+        # DELETE CONFIRMATION
+        # ----------------------------------------------------
 
-                st.session_state["flash_success_message"] = (
-                    f"Order #{order_id} deleted successfully."
+        if st.session_state.get("confirm_delete_order_id") == order_id:
+
+            @st.dialog("Confirm Delete")
+            def confirm_delete_order_dialog():
+                confirm_id = st.session_state.get("confirm_delete_order_id")
+
+                st.warning(
+                    f"Are you sure you want to permanently delete Order #{confirm_id}?"
                 )
+                st.write("This action cannot be undone.")
 
-                st.rerun()
+                yes_col, cancel_col = st.columns(2)
+
+                with yes_col:
+                    if st.button(
+                        "Yes, Delete",
+                        type="primary",
+                        use_container_width=True,
+                        key=f"confirm_delete_{confirm_id}"
+                    ):
+                        delete_order(confirm_id)
+
+                        st.session_state.pop("confirm_delete_order_id", None)
+
+                        st.session_state["flash_success_message"] = (
+                            f"Order #{confirm_id} deleted successfully."
+                        )
+
+                        st.rerun()
+
+                with cancel_col:
+                    if st.button(
+                        "Cancel",
+                        use_container_width=True,
+                        key=f"cancel_delete_{confirm_id}"
+                    ):
+                        st.session_state.pop("confirm_delete_order_id", None)
+                        st.rerun()
+
+            confirm_delete_order_dialog()
 
 
 # ============================================================
@@ -4596,6 +4809,38 @@ elif page == "My Orders":
 
                 if cancelled:
 
+                    # The cancellation is saved first. Email failure must
+                    # not roll back the customer's cancellation.
+                    selected_cancel_order = next(
+                        (
+                            item
+                            for item in cancellable_orders
+                            if item[0] == selected_cancel_order_id
+                        ),
+                        None,
+                    )
+
+                    if selected_cancel_order:
+                        cancel_email_ok, cancel_email_message = (
+                            send_order_cancellation_emails(
+                                recipient_email=user_email,
+                                customer_name=user_name,
+                                order_id=selected_cancel_order[0],
+                                device_type=selected_cancel_order[2],
+                                final_price=selected_cancel_order[8],
+                            )
+                        )
+
+                        if cancel_email_ok:
+                            st.session_state["order_status_email_message"] = (
+                                f"Cancellation email sent for Order #{selected_cancel_order_id}."
+                            )
+                        else:
+                            st.session_state["order_status_email_message"] = (
+                                "Order was cancelled, but the cancellation email could "
+                                f"not be sent: {cancel_email_message}"
+                            )
+
                     st.session_state["flash_success_message"] = (
                         f"Order #{selected_cancel_order_id} has been cancelled successfully."
                     )
@@ -5099,6 +5344,16 @@ flash_success_message = st.session_state.pop(
     "flash_success_message",
     None
 )
+
+order_status_email_message = st.session_state.pop(
+    "order_status_email_message",
+    None
+)
+if order_status_email_message:
+    if "could not be sent" in order_status_email_message.lower():
+        st.warning(order_status_email_message)
+    else:
+        st.info(order_status_email_message)
 
 if flash_success_message:
     st.success(flash_success_message)
