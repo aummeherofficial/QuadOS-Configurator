@@ -34,7 +34,8 @@ from database import (
     update_order_status,
     verify_password_reset_user,
     reset_user_password,
-    admin_reset_user_password
+    admin_reset_user_password,
+    delete_user
 )
 
 from config import (
@@ -84,6 +85,7 @@ from config import (
 )
 
 
+
 from pricing import calculate_pc_price
 from market_pricing import market_price, calculate_bundle_discount
 from email_service import (
@@ -99,7 +101,8 @@ from query_database import (
     get_all_queries,
     get_user_queries,
     update_query_status,
-    get_query_count
+    get_query_count,
+    delete_user_queries
 )
 
 st.set_page_config(
@@ -124,6 +127,42 @@ ORDER_STATUS_OPTIONS = [
     "Completed",
     "Cancelled",
 ]
+
+
+@st.dialog("Confirm Delete User")
+def confirm_delete_user_dialog(user_id, user_name):
+    st.warning(
+        f"Are you sure you want to permanently delete user **{user_name}** (ID #{user_id})?"
+    )
+    st.write("The user's account, orders, and support queries will be permanently deleted.")
+    st.write("This action cannot be undone.")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        if st.button(
+            "Yes, Delete",
+            key=f"confirm_delete_user_{user_id}",
+            type="primary",
+            use_container_width=True
+        ):
+            # Remove support queries first, then the user and their orders.
+            delete_user_queries(user_id)
+            if delete_user(user_id):
+                st.session_state["flash_success_message"] = (
+                    f"User {user_name} (ID #{user_id}) deleted successfully."
+                )
+                st.rerun()
+            else:
+                st.error("Unable to delete the selected user.")
+
+    with col2:
+        if st.button(
+            "Cancel",
+            key=f"cancel_delete_user_{user_id}",
+            use_container_width=True
+        ):
+            st.rerun()
 
 
 
@@ -177,110 +216,10 @@ def render_offers_section():
             )
 
 
-def _fallback_bundle_discount(cart):
-    """Defensive discount calculation for carts from older sessions/files.
-
-    The cart can contain categories from older QuadOS versions, so this
-    fallback uses the actual cart contents instead of relying only on exact
-    category names. This guarantees that a real multi-item combination gets
-    an offer even when an older market_pricing.py is still installed.
-    """
-    items = list(cart or [])
-    if not items:
-        return 0.0, ""
-
-    def is_accessory(item):
-        category = str(item.get("category", "")).lower()
-        name = str(item.get("name", "")).lower()
-        return (
-            category.startswith("accessory:")
-            or category.startswith("mobile_accessory:")
-            or name.startswith("accessory - ")
-        )
-
-    accessories = [item for item in items if is_accessory(item)]
-    core_items = [item for item in items if not is_accessory(item)]
-    core_count = len(core_items)
-    accessory_count = len(accessories)
-
-    device_type = str(
-        st.session_state.get("cart_device_type", "")
-    ).strip()
-    operating_system = str(
-        st.session_state.get("cart_operating_system", "")
-    ).strip()
-
-    # Infer the device if an old session did not store cart_device_type.
-    categories = [str(item.get("category", "")).lower() for item in items]
-    if not device_type:
-        if any(c.startswith(("iphone_", "android_", "mobile_accessory:")) for c in categories):
-            device_type = "Mobile"
-        else:
-            device_type = "PC"
-
-    offers = []
-
-    if core_count == 0:
-        if accessory_count >= 3:
-            offers.append((8.0, "3+ accessories — 8% bundle discount"))
-        elif accessory_count >= 2:
-            offers.append((5.0, "2 accessories — 5% bundle discount"))
-
-    elif device_type == "Mobile":
-        if core_count >= 6 and accessory_count >= 2:
-            offers.append((10.0, "Smartphone + 2 accessories — 10% bundle discount"))
-        if core_count >= 6 and accessory_count >= 1:
-            offers.append((8.0, "Complete smartphone + accessory — 8% bundle discount"))
-        if core_count >= 6:
-            offers.append((7.0, "Complete smartphone — 7% bundle discount"))
-        if core_count >= 4:
-            offers.append((6.0, "4+ smartphone components — 6% discount"))
-        if core_count >= 3:
-            offers.append((5.0, "3+ smartphone components — 5% discount"))
-        if core_count >= 2:
-            offers.append((3.0, "Smartphone component combo — 3% discount"))
-
-    elif operating_system == "macOS":
-        if core_count >= 6 and accessory_count >= 1:
-            offers.append((10.0, "Complete Mac + peripherals — 10% bundle discount"))
-        if core_count >= 6:
-            offers.append((8.0, "Complete macOS setup — 8% bundle discount"))
-        if core_count >= 4:
-            offers.append((7.0, "4+ Mac components — 7% discount"))
-        if core_count >= 3:
-            offers.append((5.0, "3+ Mac components — 5% discount"))
-        if core_count >= 2:
-            offers.append((3.0, "Mac component combo — 3% discount"))
-
-    else:
-        # Windows PC
-        if core_count >= 6 and accessory_count >= 1:
-            offers.append((12.0, "Complete PC + accessory — 12% bundle discount"))
-        if core_count >= 6:
-            offers.append((10.0, "Complete Windows PC — 10% bundle discount"))
-        if core_count >= 4:
-            offers.append((7.0, "4+ PC components — 7% discount"))
-        if core_count >= 3:
-            offers.append((5.0, "3+ PC components — 5% discount"))
-        if core_count >= 2:
-            offers.append((3.0, "PC component combo — 3% discount"))
-
-    # Accessory combinations can improve an already qualifying device offer.
-    if accessory_count >= 2 and core_count >= 2:
-        offers.append((8.0, "Device + 2 accessories — 8% bundle discount"))
-
-    return max(offers, key=lambda x: x[0]) if offers else (0.0, "")
-
-
 def get_discounted_cart_totals():
+    """Return cart totals using market_pricing.py as the single discount source."""
     subtotal = get_cart_total()
-
-    # First use the normal pricing module. If it returns 0 for a cart that
-    # clearly contains a combination, use the defensive calculation above.
     percent, offer = calculate_bundle_discount(st.session_state.cart)
-
-    if percent <= 0 and len(st.session_state.cart) >= 2:
-        percent, offer = _fallback_bundle_discount(st.session_state.cart)
 
     discount = subtotal * percent / 100.0
     final = max(subtotal - discount, 0.0)
@@ -2406,6 +2345,40 @@ elif page == "All Users":
     else:
         st.info("No users found.")
 
+    if users:
+        st.divider()
+        st.subheader("Delete User")
+        st.warning("Deleting a user permanently removes their account, orders, and support queries.")
+
+        deletable_users = [
+            user for user in users
+            if (user[5] or "user").lower() == "user"
+        ]
+
+        if deletable_users:
+            delete_user_options = {
+                f"{user[1]} — {user[2]} (ID #{user[0]})": (user[0], user[1])
+                for user in deletable_users
+            }
+
+            delete_user_label = st.selectbox(
+                "Select User to Delete",
+                list(delete_user_options.keys()),
+                key="admin_delete_user_select"
+            )
+
+            delete_user_id, delete_user_name = delete_user_options[delete_user_label]
+
+            if st.button(
+                "Delete Selected User",
+                key="admin_delete_user_button",
+                type="primary",
+                use_container_width=True
+            ):
+                confirm_delete_user_dialog(delete_user_id, delete_user_name)
+        else:
+            st.info("There are no normal users available to delete.")
+
 
 # ============================================================
 # ALL ORDERS
@@ -3188,6 +3161,7 @@ elif page == "Home":
 
     render_offers_section()
 
+    # ========================================================
     st.markdown(
         f"""
         <div class="main-title">
@@ -3304,21 +3278,6 @@ elif page == "Home":
     
     st.write("")
     st.divider()
-
-
-
-
-    st.subheader("QuadOS")
-
-    st.write(
-        """
-        QuadOS focuses primarily on custom PC configuration,
-        especially Windows and macOS systems.
-
-        Mobile configuration for iPhone and Android is
-        included as an additional part of the platform.
-        """
-    )
 
 
 # ============================================================

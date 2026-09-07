@@ -228,6 +228,36 @@ def add_query_message(query_id, sender_type, sender_id, sender_name, message):
     return changed
 
 
+def delete_query(query_id):
+    """Permanently delete a query and its conversation messages."""
+
+    connection = get_query_connection()
+    cursor = connection.cursor()
+
+    cursor.execute("DELETE FROM user_queries WHERE id = ?", (query_id,))
+    deleted = cursor.rowcount > 0
+
+    connection.commit()
+    connection.close()
+
+    return deleted
+
+
+def delete_user_queries(user_id):
+    """Delete all support queries belonging to a user."""
+
+    connection = get_query_connection()
+    cursor = connection.cursor()
+
+    cursor.execute("DELETE FROM user_queries WHERE user_id = ?", (user_id,))
+    deleted_count = cursor.rowcount
+
+    connection.commit()
+    connection.close()
+
+    return deleted_count
+
+
 def update_query_status(query_id, status):
     allowed = {"Pending", "In Progress", "Resolved"}
 

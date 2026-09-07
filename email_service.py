@@ -502,3 +502,5 @@ def send_password_reset_email(recipient_email, customer_name):
         subtype="html",
     )
     return _smtp_send(msg)
+
+

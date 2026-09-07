@@ -635,6 +635,34 @@ def get_all_users():
 
 
 # ============================================================
+# DELETE USER
+# ============================================================
+
+def delete_user(user_id):
+    """Permanently delete a normal user and their related orders."""
+
+    connection = get_connection()
+    cursor = connection.cursor()
+
+    cursor.execute("SELECT role FROM users WHERE id = ?", (user_id,))
+    user = cursor.fetchone()
+
+    if not user or (user[0] or "user").lower() != "user":
+        connection.close()
+        return False
+
+    # Orders reference users, so remove the user's orders first.
+    cursor.execute("DELETE FROM orders WHERE user_id = ?", (user_id,))
+    cursor.execute("DELETE FROM users WHERE id = ?", (user_id,))
+
+    connection.commit()
+    deleted = cursor.rowcount > 0
+    connection.close()
+
+    return deleted
+
+
+# ============================================================
 # PASSWORD RESET - VERIFY USER
 # ============================================================
 
@@ -800,22 +828,46 @@ def create_order(
 # ============================================================
 
 def update_order_status(order_id, status):
-    """Update an order status from the admin panel."""
-    allowed = {"Placed", "Confirmed", "In Progress", "Completed", "Payment Pending", "Cancelled"}
+    """Update an order status from the admin panel.
+
+    Returns True only when the requested order exists and its status
+    was successfully updated.
+    """
+    allowed = {
+        "Placed",
+        "Confirmed",
+        "In Progress",
+        "Completed",
+        "Payment Pending",
+        "Cancelled",
+    }
+
     if status not in allowed:
         return False
 
     connection = get_connection()
     cursor = connection.cursor()
-    cursor.execute("""
-        UPDATE orders
-        SET status = ?
-        WHERE id = ?
-    """, (status, order_id))
-    changed = cursor.rowcount > 0
-    connection.commit()
-    connection.close()
-    return changed
+
+    try:
+        cursor.execute(
+            """
+            UPDATE orders
+            SET status = ?
+            WHERE id = ?
+            """,
+            (status, order_id),
+        )
+
+        changed = cursor.rowcount > 0
+        connection.commit()
+        return changed
+
+    except sqlite3.Error:
+        connection.rollback()
+        return False
+
+    finally:
+        connection.close()
 
 
 def cancel_order(user_id, order_id):

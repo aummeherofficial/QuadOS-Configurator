@@ -1,7 +1,5 @@
 import streamlit as st
 
-from email_service import send_new_query_admin_email, send_query_reply_email
-
 from query_database import (
     create_user_query,
     get_user_queries,
@@ -10,11 +8,25 @@ from query_database import (
     add_query_message,
     get_all_queries,
     update_query_status,
+    delete_query,
 )
+
+
+def _set_query_flash(message):
+    """Store a query success message so it survives st.rerun()."""
+    st.session_state["query_flash_message"] = message
+
+
+def _show_query_flash():
+    message = st.session_state.pop("query_flash_message", None)
+    if message:
+        st.success(message)
 
 
 def render_user_help_queries(current_user):
     """Separate user-side help/query chat."""
+
+    _show_query_flash()
 
     user_id = current_user[0]
     user_name = current_user[1]
@@ -55,16 +67,9 @@ def render_user_help_queries(current_user):
                     subject,
                     question
                 )
-                submitted_at = __import__("datetime").datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                send_new_query_admin_email(
-                    query_id,
-                    user_name,
-                    user_email,
-                    subject,
-                    question,
-                    submitted_at,
+                _set_query_flash(
+                    f"Query #{query_id} sent successfully."
                 )
-                st.success(f"Query #{query_id} sent successfully.")
                 st.rerun()
 
     st.divider()
@@ -140,14 +145,46 @@ def render_user_help_queries(current_user):
                         user_name,
                         reply
                     )
-                    st.success("Reply sent.")
+                    _set_query_flash("Reply sent.")
                     st.rerun()
     else:
         st.info("This query is resolved. Create a new query if you need more help.")
 
 
+@st.dialog("Confirm Delete Query")
+def confirm_delete_query_dialog(query_id):
+    st.warning(f"Are you sure you want to permanently delete Query #{query_id}?")
+    st.write("The query and its complete conversation will be permanently deleted.")
+    st.write("This action cannot be undone.")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        if st.button(
+            "Yes, Delete",
+            key=f"confirm_delete_query_{query_id}",
+            type="primary",
+            use_container_width=True
+        ):
+            if delete_query(query_id):
+                _set_query_flash(f"Query #{query_id} deleted successfully.")
+                st.rerun()
+            else:
+                st.error("Unable to delete the selected query.")
+
+    with col2:
+        if st.button(
+            "Cancel",
+            key=f"cancel_delete_query_{query_id}",
+            use_container_width=True
+        ):
+            st.rerun()
+
+
 def render_admin_queries(current_user):
     """Admin-side query table and two-way communication."""
+
+    _show_query_flash()
 
     st.title("Queries")
     st.write("Communicate directly with QuadOS users.")
@@ -249,14 +286,7 @@ def render_admin_queries(current_user):
                         current_user[1],
                         reply
                     )
-                    send_query_reply_email(
-                        details[3],
-                        details[2],
-                        selected_query_id,
-                        details[4],
-                        reply,
-                    )
-                    st.success("Reply sent to user.")
+                    _set_query_flash("Reply sent to user.")
                     st.rerun()
 
     st.divider()
@@ -285,7 +315,20 @@ def render_admin_queries(current_user):
         use_container_width=True
     ):
         if update_query_status(selected_query_id, new_status):
-            st.success("Query status updated.")
+            _set_query_flash("Query status updated.")
             st.rerun()
         else:
             st.error("Unable to update the query status.")
+
+    st.divider()
+
+    st.subheader("Delete Query")
+    st.warning("Deleting this query permanently removes the query and its entire conversation.")
+
+    if st.button(
+        f"Delete Query #{selected_query_id}",
+        key=f"admin_delete_query_{selected_query_id}",
+        type="primary",
+        use_container_width=True
+    ):
+        confirm_delete_query_dialog(selected_query_id)
