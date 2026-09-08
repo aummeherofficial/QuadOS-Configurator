@@ -1,4 +1,8 @@
 import sqlite3
+import hashlib
+import hmac
+import secrets
+from datetime import datetime
 
 
 # ============================================================
@@ -79,6 +83,18 @@ def create_tables():
 
             status TEXT DEFAULT 'Placed',
 
+            payment_status TEXT DEFAULT 'Pending',
+
+            razorpay_order_id TEXT,
+
+            razorpay_payment_link_id TEXT,
+
+            razorpay_payment_id TEXT,
+
+            payment_date TEXT,
+
+            cancelled_date TEXT,
+
             FOREIGN KEY (user_id)
             REFERENCES users(id)
         )
@@ -123,6 +139,45 @@ def create_tables():
         """)
 
     # ========================================================
+    # ORDER PAYMENT COLUMN MIGRATION
+    # ========================================================
+    cursor.execute("PRAGMA table_info(orders)")
+    order_columns = [column[1] for column in cursor.fetchall()]
+
+    if "payment_status" not in order_columns:
+        cursor.execute("ALTER TABLE orders ADD COLUMN payment_status TEXT DEFAULT 'Pending'")
+
+    if "razorpay_order_id" not in order_columns:
+        cursor.execute("ALTER TABLE orders ADD COLUMN razorpay_order_id TEXT")
+
+    if "razorpay_payment_link_id" not in order_columns:
+        cursor.execute("ALTER TABLE orders ADD COLUMN razorpay_payment_link_id TEXT")
+
+    if "razorpay_payment_id" not in order_columns:
+        cursor.execute("ALTER TABLE orders ADD COLUMN razorpay_payment_id TEXT")
+
+    if "payment_date" not in order_columns:
+        cursor.execute("ALTER TABLE orders ADD COLUMN payment_date TEXT")
+
+    if "cancelled_date" not in order_columns:
+        cursor.execute("ALTER TABLE orders ADD COLUMN cancelled_date TEXT")
+
+    # Preserve the best available historical date for existing records.
+    # Future payments/cancellations receive their real event timestamp.
+    cursor.execute("""
+        UPDATE orders
+        SET payment_date = order_date
+        WHERE LOWER(COALESCE(payment_status, 'Pending')) = 'paid'
+          AND (payment_date IS NULL OR TRIM(payment_date) = '')
+    """)
+    cursor.execute("""
+        UPDATE orders
+        SET cancelled_date = order_date
+        WHERE LOWER(COALESCE(status, 'Placed')) = 'cancelled'
+          AND (cancelled_date IS NULL OR TRIM(cancelled_date) = '')
+    """)
+
+    # ========================================================
     # ENSURE EXISTING USERS HAVE USER ROLE
     # ========================================================
 
@@ -163,7 +218,7 @@ def create_tables():
         """, (
             "QuadOS Admin",
             "admin@quados.com",
-            "admin123",
+            _hash_password("admin123"),
             "",
             "",
             "admin"
@@ -178,9 +233,11 @@ def create_tables():
             UPDATE users
             SET role = 'admin'
             WHERE LOWER(email) = ?
-        """, (
-            "admin@quados.com",
-        ))
+        """, ("admin@quados.com",))
+        cursor.execute("SELECT id, password FROM users WHERE LOWER(email) = ?", ("admin@quados.com",))
+        admin_row = cursor.fetchone()
+        if admin_row and _needs_password_migration(admin_row[1]):
+            _set_hashed_password(cursor, admin_row[0], admin_row[1])
 
     # ========================================================
     # ORDER TABLE MIGRATION
@@ -211,6 +268,19 @@ def create_tables():
     """)
 
     # ========================================================
+    # PAYMENT COLUMN MIGRATION
+    # ========================================================
+
+    if "payment_status" not in order_column_names:
+        cursor.execute("ALTER TABLE orders ADD COLUMN payment_status TEXT DEFAULT 'Pending'")
+
+    if "razorpay_payment_link_id" not in order_column_names:
+        cursor.execute("ALTER TABLE orders ADD COLUMN razorpay_payment_link_id TEXT")
+
+    if "razorpay_payment_id" not in order_column_names:
+        cursor.execute("ALTER TABLE orders ADD COLUMN razorpay_payment_id TEXT")
+
+    # ========================================================
     # COMMIT
     # ========================================================
 
@@ -219,52 +289,63 @@ def create_tables():
 
 
 # ============================================================
+# PASSWORD HELPERS
+# ============================================================
+
+_PASSWORD_PREFIX = "pbkdf2_sha256$"
+_PASSWORD_ITERATIONS = 260_000
+
+
+def _hash_password(password):
+    password = str(password)
+    salt = secrets.token_hex(16)
+    digest = hashlib.pbkdf2_hmac(
+        "sha256", password.encode("utf-8"), salt.encode("utf-8"), _PASSWORD_ITERATIONS
+    ).hex()
+    return f"{_PASSWORD_PREFIX}{_PASSWORD_ITERATIONS}${salt}${digest}"
+
+
+def _verify_password(password, stored_password):
+    stored_password = str(stored_password or "")
+    if not stored_password.startswith(_PASSWORD_PREFIX):
+        return hmac.compare_digest(stored_password, str(password))
+
+    try:
+        _, iterations, salt, expected = stored_password.split("$", 3)
+        digest = hashlib.pbkdf2_hmac(
+            "sha256", str(password).encode("utf-8"), salt.encode("utf-8"), int(iterations)
+        ).hex()
+        return hmac.compare_digest(digest, expected)
+    except (ValueError, TypeError):
+        return False
+
+
+def _needs_password_migration(stored_password):
+    return not str(stored_password or "").startswith(_PASSWORD_PREFIX)
+
+
+def _set_hashed_password(cursor, user_id, password):
+    cursor.execute("UPDATE users SET password = ? WHERE id = ?", (_hash_password(password), user_id))
+
+
+# ============================================================
 # CREATE USER
 # ============================================================
 
-def create_user(
-    name,
-    email,
-    password,
-    phone,
-    address
-):
-
+def create_user(name, email, password, phone, address):
     connection = get_connection()
     cursor = connection.cursor()
-
     try:
-
         cursor.execute("""
-            INSERT INTO users
-            (
-                name,
-                email,
-                password,
-                phone,
-                address,
-                role
-            )
+            INSERT INTO users (name, email, password, phone, address, role)
             VALUES (?, ?, ?, ?, ?, ?)
-        """, (
-            name.strip(),
-            email.strip().lower(),
-            password,
-            phone.strip(),
-            address.strip(),
-            "user"
-        ))
-
+        """, (name.strip(), email.strip().lower(), _hash_password(password),
+              phone.strip(), address.strip(), "user"))
         connection.commit()
-
         return True
-
     except sqlite3.IntegrityError:
-
         return False
-
     finally:
-
         connection.close()
 
 
@@ -273,64 +354,28 @@ def create_user(
 # ============================================================
 
 def login_user(identifier, password):
-
     connection = get_connection()
     cursor = connection.cursor()
-
     identifier = identifier.strip().lower()
-
     cursor.execute("""
-        SELECT
-            id,
-            name,
-            email,
-            password,
-            phone,
-            address,
-            role
-        FROM users
-        WHERE LOWER(email) = ?
-        AND password = ?
-    """, (
-        identifier,
-        password
-    ))
-
+        SELECT id, name, email, password, phone, address, role
+        FROM users WHERE LOWER(email) = ?
+    """, (identifier,))
     user = cursor.fetchone()
+    if not user or not _verify_password(password, user[3]):
+        connection.close()
+        return None
 
+    # Seamlessly migrate old plaintext passwords after a successful login.
+    if _needs_password_migration(user[3]):
+        _set_hashed_password(cursor, user[0], password)
+        connection.commit()
+        cursor.execute("""
+            SELECT id, name, email, password, phone, address, role
+            FROM users WHERE id = ?
+        """, (user[0],))
+        user = cursor.fetchone()
     connection.close()
-
-    return user
-
-
-# ============================================================
-# GET USER BY ID
-# ============================================================
-
-def get_user_by_id(user_id):
-
-    connection = get_connection()
-    cursor = connection.cursor()
-
-    cursor.execute("""
-        SELECT
-            id,
-            name,
-            email,
-            password,
-            phone,
-            address,
-            role
-        FROM users
-        WHERE id = ?
-    """, (
-        user_id,
-    ))
-
-    user = cursor.fetchone()
-
-    connection.close()
-
     return user
 
 
@@ -400,7 +445,7 @@ def create_admin():
         """, (
             "QuadOS Admin",
             "admin@quados.com",
-            "admin123",
+            _hash_password("admin123"),
             "",
             "",
             "admin"
@@ -412,9 +457,11 @@ def create_admin():
             UPDATE users
             SET role = 'admin'
             WHERE LOWER(email) = ?
-        """, (
-            "admin@quados.com",
-        ))
+        """, ("admin@quados.com",))
+        cursor.execute("SELECT id, password FROM users WHERE LOWER(email) = ?", ("admin@quados.com",))
+        admin_row = cursor.fetchone()
+        if admin_row and _needs_password_migration(admin_row[1]):
+            _set_hashed_password(cursor, admin_row[0], admin_row[1])
 
     connection.commit()
     connection.close()
@@ -543,6 +590,8 @@ def get_total_orders():
     cursor.execute("""
         SELECT COUNT(*)
         FROM orders
+        WHERE LOWER(COALESCE(payment_status, 'Pending')) = 'paid'
+        AND COALESCE(status, 'Placed') != 'Cancelled'
     """)
 
     total = cursor.fetchone()[0]
@@ -562,8 +611,10 @@ def get_total_revenue():
     cursor = connection.cursor()
 
     cursor.execute("""
-        SELECT SUM(final_price)
+        SELECT COALESCE(SUM(final_price), 0)
         FROM orders
+        WHERE LOWER(COALESCE(payment_status, 'Pending')) = 'paid'
+        AND COALESCE(status, 'Placed') != 'Cancelled'
     """)
 
     total = cursor.fetchone()[0]
@@ -673,7 +724,7 @@ def verify_password_reset_user(email, phone):
     cursor = connection.cursor()
 
     cursor.execute("""
-        SELECT id
+        SELECT id, name, email
         FROM users
         WHERE LOWER(email) = ?
         AND phone = ?
@@ -705,10 +756,7 @@ def reset_user_password(user_id, new_password):
         SET password = ?
         WHERE id = ?
         AND role = 'user'
-    """, (
-        new_password,
-        user_id
-    ))
+    """, (_hash_password(new_password), user_id))
 
     changed = cursor.rowcount > 0
 
@@ -733,10 +781,7 @@ def admin_reset_user_password(user_id, new_password):
         SET password = ?
         WHERE id = ?
         AND role = 'user'
-    """, (
-        new_password,
-        user_id
-    ))
+    """, (_hash_password(new_password), user_id))
 
     changed = cursor.rowcount > 0
 
@@ -819,8 +864,175 @@ def create_order(
     ))
 
     connection.commit()
+    order_id = cursor.lastrowid
 
     connection.close()
+
+    return order_id
+
+
+# ============================================================
+# PAYMENT HELPERS
+# ============================================================
+
+def update_order_payment(
+    order_id,
+    payment_status,
+    razorpay_order_id=None,
+    razorpay_payment_link_id=None,
+    razorpay_payment_id=None
+):
+    connection = get_connection()
+    cursor = connection.cursor()
+
+    normalized = str(payment_status or "Pending").strip().title()
+    if normalized not in {"Pending", "Paid", "Failed"}:
+        return False
+
+    connection_check = get_connection()
+    check_cursor = connection_check.cursor()
+    check_cursor.execute(
+        "SELECT status, payment_status FROM orders WHERE id = ?",
+        (order_id,)
+    )
+    existing = check_cursor.fetchone()
+    connection_check.close()
+
+    if not existing:
+        return False
+
+    current_status, current_payment = existing
+    current_payment = str(current_payment or "Pending").lower()
+    if current_payment == "paid" and normalized.lower() != "paid":
+        return False
+    if str(current_status or "Placed").lower() == "cancelled" and normalized == "Paid":
+        return False
+
+    payment_timestamp = datetime.now().isoformat(timespec="seconds") if normalized == "Paid" else None
+
+    cursor.execute("""
+        UPDATE orders
+        SET payment_status = ?,
+            payment_date = CASE
+                WHEN ? IS NOT NULL THEN COALESCE(payment_date, ?)
+                ELSE payment_date
+            END,
+            razorpay_order_id = COALESCE(?, razorpay_order_id),
+            razorpay_payment_link_id = COALESCE(?, razorpay_payment_link_id),
+            razorpay_payment_id = COALESCE(?, razorpay_payment_id)
+        WHERE id = ?
+    """, (
+        normalized,
+        payment_timestamp,
+        payment_timestamp,
+        razorpay_order_id,
+        razorpay_payment_link_id,
+        razorpay_payment_id,
+        order_id
+    ))
+
+    connection.commit()
+    updated = cursor.rowcount > 0
+    connection.close()
+    return updated
+
+
+def mark_order_paid(order_id, razorpay_payment_id=None, razorpay_order_id=None):
+    connection = get_connection()
+    cursor = connection.cursor()
+
+    payment_timestamp = datetime.now().isoformat(timespec="seconds")
+
+    cursor.execute("""
+        UPDATE orders
+        SET payment_status = 'Paid',
+            status = CASE
+                WHEN COALESCE(status, 'Placed') = 'Payment Pending' THEN 'Placed'
+                ELSE status
+            END,
+            payment_date = COALESCE(payment_date, ?),
+            razorpay_order_id = COALESCE(?, razorpay_order_id),
+            razorpay_payment_id = COALESCE(?, razorpay_payment_id)
+        WHERE id = ?
+          AND LOWER(COALESCE(status, 'Placed')) != 'cancelled'
+          AND LOWER(COALESCE(payment_status, 'Pending')) != 'paid'
+    """, (
+        payment_timestamp,
+        razorpay_order_id,
+        razorpay_payment_id,
+        order_id
+    ))
+
+    connection.commit()
+    updated = cursor.rowcount > 0
+    connection.close()
+    return updated
+
+
+def get_order_by_id(order_id):
+    connection = get_connection()
+    cursor = connection.cursor()
+
+    cursor.execute("""
+        SELECT id, user_id, device_type, operating_system, configuration,
+               accessories, subtotal, discount, final_price, order_date, status,
+               payment_status, razorpay_order_id, razorpay_payment_link_id,
+               razorpay_payment_id, payment_date, cancelled_date
+        FROM orders
+        WHERE id = ?
+    """, (order_id,))
+
+    row = cursor.fetchone()
+    connection.close()
+    return row
+
+
+def get_order_by_razorpay_order_id(razorpay_order_id):
+    connection = get_connection()
+    cursor = connection.cursor()
+
+    cursor.execute("""
+        SELECT id, user_id, final_price, status, payment_status,
+               razorpay_order_id, razorpay_payment_id
+        FROM orders
+        WHERE razorpay_order_id = ?
+    """, (str(razorpay_order_id),))
+
+    row = cursor.fetchone()
+    connection.close()
+    return row
+
+
+def get_order_payment(order_id):
+    connection = get_connection()
+    cursor = connection.cursor()
+
+    cursor.execute("""
+        SELECT id, user_id, final_price, status, payment_status,
+               razorpay_order_id, razorpay_payment_link_id, razorpay_payment_id
+        FROM orders
+        WHERE id = ?
+    """, (order_id,))
+
+    row = cursor.fetchone()
+    connection.close()
+    return row
+
+
+def get_order_by_payment_link(razorpay_payment_link_id):
+    connection = get_connection()
+    cursor = connection.cursor()
+
+    cursor.execute("""
+        SELECT id, user_id, final_price, status, payment_status,
+               razorpay_order_id, razorpay_payment_link_id, razorpay_payment_id
+        FROM orders
+        WHERE razorpay_payment_link_id = ?
+    """, (razorpay_payment_link_id,))
+
+    row = cursor.fetchone()
+    connection.close()
+    return row
 
 
 # ============================================================
@@ -828,71 +1040,77 @@ def create_order(
 # ============================================================
 
 def update_order_status(order_id, status):
-    """Update an order status from the admin panel.
-
-    Returns True only when the requested order exists and its status
-    was successfully updated.
-    """
-    allowed = {
-        "Placed",
-        "Confirmed",
-        "In Progress",
-        "Completed",
-        "Payment Pending",
-        "Cancelled",
-    }
-
+    """Safely update an order status while respecting payment/state rules."""
+    allowed = {"Placed", "Confirmed", "In Progress", "Completed", "Payment Pending", "Cancelled"}
     if status not in allowed:
         return False
 
     connection = get_connection()
     cursor = connection.cursor()
-
     try:
-        cursor.execute(
-            """
-            UPDATE orders
-            SET status = ?
-            WHERE id = ?
-            """,
-            (status, order_id),
-        )
+        cursor.execute("SELECT status, payment_status FROM orders WHERE id = ?", (order_id,))
+        row = cursor.fetchone()
+        if not row:
+            return False
+        current_status, payment_status = row
+        current_status = current_status or "Placed"
+        payment_status = (payment_status or "Pending").lower()
 
+        if current_status == "Cancelled":
+            return False
+        if status == "Payment Pending" and payment_status == "paid":
+            return False
+        if status in {"Confirmed", "In Progress", "Completed"} and payment_status != "paid":
+            return False
+        if status == "Cancelled" and payment_status == "paid":
+            # No refund mechanism exists, so never create a paid+cancelled state.
+            return False
+        if current_status == "Completed" and status != "Completed":
+            return False
+
+        cancelled_timestamp = datetime.now().isoformat(timespec="seconds") if status == "Cancelled" else None
+        cursor.execute("""
+            UPDATE orders
+            SET status = ?,
+                cancelled_date = CASE
+                    WHEN ? IS NOT NULL THEN COALESCE(cancelled_date, ?)
+                    ELSE cancelled_date
+                END
+            WHERE id = ?
+        """, (status, cancelled_timestamp, cancelled_timestamp, order_id))
         changed = cursor.rowcount > 0
         connection.commit()
         return changed
-
     except sqlite3.Error:
         connection.rollback()
         return False
-
     finally:
         connection.close()
 
 
 def cancel_order(user_id, order_id):
+    """Cancel an unpaid order belonging to the signed-in user.
 
+    Paid orders require a refund workflow, which QuadOS does not currently implement.
+    """
     connection = get_connection()
     cursor = connection.cursor()
-
-    cursor.execute("""
-        UPDATE orders
-        SET status = 'Cancelled'
-        WHERE id = ?
-        AND user_id = ?
-        AND (status IS NULL OR status != 'Cancelled')
-    """, (
-        order_id,
-        user_id
-    ))
-
-    connection.commit()
-
-    changed = cursor.rowcount > 0
-
-    connection.close()
-
-    return changed
+    try:
+        cursor.execute("""
+            UPDATE orders
+            SET status = 'Cancelled'
+            WHERE id = ? AND user_id = ?
+              AND COALESCE(status, 'Placed') != 'Cancelled'
+              AND LOWER(COALESCE(payment_status, 'Pending')) != 'paid'
+        """, (order_id, user_id))
+        changed = cursor.rowcount > 0
+        connection.commit()
+        return changed
+    except sqlite3.Error:
+        connection.rollback()
+        return False
+    finally:
+        connection.close()
 
 
 # ============================================================

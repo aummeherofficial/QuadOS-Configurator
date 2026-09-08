@@ -5,6 +5,7 @@ from pathlib import Path
 from datetime import datetime
 import pandas as pd
 import re
+import os
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 
@@ -35,7 +36,12 @@ from database import (
     verify_password_reset_user,
     reset_user_password,
     admin_reset_user_password,
-    delete_user
+    delete_user,
+    update_order_payment,
+    mark_order_paid,
+    get_order_payment,
+    get_order_by_id,
+    get_order_by_razorpay_order_id
 )
 
 from config import (
@@ -88,11 +94,21 @@ from config import (
 
 from pricing import calculate_pc_price
 from market_pricing import market_price, calculate_bundle_discount
+from payment_standard import (
+    create_razorpay_order,
+    verify_payment_signature,
+    fetch_payment,
+    fetch_order_payments,
+    get_captured_payment_for_order,
+    is_payment_captured,
+    build_checkout_html,
+)
 from email_service import (
     send_order_confirmation_email,
-    get_latest_order_id,
     send_order_status_email,
     send_order_cancellation_emails,
+    send_welcome_email,
+    send_password_reset_email,
 )
 
 from query_database import (
@@ -226,6 +242,372 @@ def get_discounted_cart_totals():
     return subtotal, discount, final, percent, offer
 
 
+def get_razorpay_credentials():
+    """Read Razorpay credentials without hardcoding secrets in the app."""
+    key_id = os.getenv("RAZORPAY_KEY_ID", "")
+    key_secret = os.getenv("RAZORPAY_KEY_SECRET", "")
+
+    try:
+        key_id = st.secrets.get("RAZORPAY_KEY_ID", key_id)
+        key_secret = st.secrets.get("RAZORPAY_KEY_SECRET", key_secret)
+    except Exception:
+        pass
+
+    return str(key_id).strip(), str(key_secret).strip()
+
+
+def initiate_razorpay_payment(
+    user_id, user_name, user_email, user_phone,
+    device_type, operating_system, configuration, accessories,
+    subtotal, discount, final_price, order_date, order_items
+):
+    """Create a local pending order and its Razorpay Standard Checkout order."""
+    key_id, key_secret = get_razorpay_credentials()
+
+    if not key_id or not key_secret:
+        return False, "Razorpay Test API keys are not configured.", None
+
+    local_order_id = create_order(
+        user_id=user_id,
+        device_type=device_type,
+        operating_system=operating_system,
+        configuration=configuration,
+        accessories=accessories,
+        subtotal=subtotal,
+        discount=discount,
+        final_price=final_price,
+        order_date=order_date,
+        status="Payment Pending"
+    )
+
+    try:
+        razorpay_order = create_razorpay_order(
+            key_id=key_id,
+            key_secret=key_secret,
+            amount_rupees=final_price,
+            receipt=f"quados_{local_order_id}",
+            notes={
+                "quados_order_id": local_order_id,
+                "device_type": device_type,
+            },
+        )
+
+        razorpay_order_id = razorpay_order.get("id")
+        if not razorpay_order_id:
+            raise RuntimeError("Razorpay did not return a valid order ID.")
+
+        update_order_payment(
+            local_order_id,
+            "Pending",
+            razorpay_order_id=razorpay_order_id
+        )
+
+        st.session_state.pending_payment = {
+            "order_id": local_order_id,
+            "razorpay_order_id": razorpay_order_id,
+            "device_type": device_type,
+            "final_price": float(final_price),
+            "customer_name": user_name,
+            "customer_email": user_email,
+            "customer_phone": user_phone,
+            "operating_system": operating_system,
+            "configuration": configuration,
+            "accessories": accessories,
+            "subtotal": float(subtotal),
+            "discount": float(discount),
+            "order_date": order_date,
+            "order_items": [dict(item) for item in order_items],
+        }
+
+        return True, "Razorpay order created successfully.", local_order_id
+
+    except Exception as exc:
+        update_order_payment(local_order_id, "Failed")
+        update_order_status(local_order_id, "Cancelled")
+        return False, f"Could not create the Razorpay order: {exc}", local_order_id
+
+
+def complete_paid_order(order_id, payment_id, razorpay_order_id):
+    """Mark a verified/captured Razorpay payment as a QuadOS order."""
+    order = get_order_by_id(order_id)
+    if not order:
+        return False, "QuadOS order was not found."
+
+    if order[1] != user_id:
+        return False, "This payment does not belong to the signed-in user."
+
+    if str(order[12] or "") != str(razorpay_order_id):
+        return False, "Razorpay order does not match the QuadOS order."
+
+    if str(order[11] or "").lower() == "paid":
+        return True, "Payment was already confirmed."
+
+    if not mark_order_paid(order_id, payment_id, razorpay_order_id):
+        return False, "Could not update the order payment status."
+
+    updated_order = get_order_by_id(order_id)
+    (
+        _order_id, _user_id, device_type, operating_system, configuration,
+        accessories, subtotal, discount, final_price, order_date, _status,
+        _payment_status, _razorpay_order_id, _payment_link_id, _payment_id,
+        _payment_date, _cancelled_date
+    ) = updated_order
+
+    customer_name = user_name
+    email_items = st.session_state.get("pending_payment", {}).get("order_items", [])
+
+    email_ok, email_message = send_order_confirmation_email(
+        recipient_email=user_email,
+        customer_name=customer_name,
+        order_id=order_id,
+        device_type=device_type,
+        operating_system=operating_system,
+        configuration=configuration,
+        accessories=accessories,
+        subtotal=subtotal,
+        discount=discount,
+        final_price=final_price,
+        order_date=order_date,
+        order_items=email_items
+    )
+
+    st.session_state.order_success_message = (
+        f"Payment successful. Order #{order_id} has been placed successfully. "
+        + ("Confirmation email sent to your registered email." if email_ok
+           else "Your order is saved, but the confirmation email could not be sent.")
+    )
+    st.session_state.order_email_status = email_message
+    st.session_state.pop("pending_payment", None)
+    st.session_state.pop("pending_payment_callback_handled", None)
+    clear_cart()
+    # Always land on My Orders after a confirmed payment.
+    st.session_state.user_navigation = "My Orders"
+
+    return True, "Payment confirmed successfully."
+
+
+def handle_standard_razorpay_callback():
+    """Verify the Standard Checkout response before updating the local order."""
+    params = st.query_params
+    payment_id = params.get("razorpay_payment_id")
+    razorpay_order_id = params.get("razorpay_order_id")
+    signature = params.get("razorpay_signature")
+
+    if not all([payment_id, razorpay_order_id, signature]):
+        return
+
+    signature_key = f"{razorpay_order_id}:{payment_id}:{signature}"
+    if st.session_state.get("pending_payment_callback_handled") == signature_key:
+        return
+
+    pending = st.session_state.get("pending_payment")
+    local_order = get_order_by_razorpay_order_id(razorpay_order_id)
+
+    if not local_order:
+        st.error("Payment verification failed. The Razorpay order is not linked to a QuadOS order.")
+        st.session_state.pending_payment_callback_handled = signature_key
+        return
+
+    if local_order[1] != user_id:
+        st.error("Payment verification failed. This payment does not belong to your account.")
+        st.session_state.pending_payment_callback_handled = signature_key
+        return
+
+    if pending and str(pending.get("order_id")) != str(local_order[0]):
+        st.error("Payment verification failed. The pending order does not match the payment.")
+        st.session_state.pending_payment_callback_handled = signature_key
+        return
+
+    key_id, key_secret = get_razorpay_credentials()
+    if not key_id or not key_secret:
+        st.error("Razorpay payment received, but API credentials are not configured.")
+        return
+
+    if not verify_payment_signature(
+        key_id, key_secret, razorpay_order_id, payment_id, signature
+    ):
+        st.session_state.pending_payment_callback_handled = signature_key
+        st.error("Payment verification failed. The Razorpay signature could not be verified.")
+        return
+
+    try:
+        payment = fetch_payment(key_id, key_secret, payment_id)
+    except Exception as exc:
+        st.error(f"Payment verification failed while checking Razorpay: {exc}")
+        return
+
+    expected_amount = round(float(local_order[2]), 2)
+    actual_amount = round(float(payment.get("amount", 0)) / 100.0, 2)
+    if actual_amount != expected_amount:
+        st.session_state.pending_payment_callback_handled = signature_key
+        st.error("Payment verification failed. The payment amount does not match the QuadOS order.")
+        return
+
+    if not is_payment_captured(payment):
+        st.session_state.pending_payment_callback_handled = signature_key
+        st.warning(
+            f"Payment has not been captured yet. Razorpay status: "
+            f"{payment.get('status', 'unknown')}."
+        )
+        return
+
+    st.session_state.pending_payment_callback_handled = signature_key
+    ok, message = complete_paid_order(local_order[0], payment_id, razorpay_order_id)
+    st.query_params.clear()
+
+    if ok:
+        st.success(message)
+        st.rerun()
+    else:
+        st.error(message)
+
+
+@st.fragment(run_every="2s")
+def monitor_pending_razorpay_payment():
+    """Poll Razorpay from the server until the pending order is captured.
+
+    This fixes the browser/iframe return problem: even if Razorpay's handler
+    cannot navigate the Streamlit page, QuadOS can independently reconcile the
+    exact Razorpay order using the authenticated Razorpay API.
+    """
+    pending = st.session_state.get("pending_payment")
+    if not pending:
+        return
+
+    key_id, key_secret = get_razorpay_credentials()
+    if not key_id or not key_secret:
+        return
+
+    try:
+        payment = get_captured_payment_for_order(
+            key_id,
+            key_secret,
+            pending["razorpay_order_id"],
+            pending["final_price"],
+        )
+    except Exception:
+        # Razorpay may briefly return a transient API/network error.
+        # Keep the checkout visible and try again on the next fragment run.
+        return
+
+    if not payment:
+        return
+
+    payment_id = str(payment.get("id", "")).strip()
+    razorpay_order_id = str(payment.get("order_id", "")).strip()
+    if not payment_id or not razorpay_order_id:
+        return
+
+    # Reuse the same server-side completion path used by the signed handler.
+    ok, message = complete_paid_order(
+        pending["order_id"],
+        payment_id,
+        razorpay_order_id,
+    )
+
+    if ok:
+        st.session_state.order_success_message = (
+            f"Payment successful. Order #{pending['order_id']} has been placed successfully."
+        )
+        st.rerun()
+    else:
+        st.error(message)
+
+
+def render_pending_payment(device_type):
+    """Render Razorpay Standard Checkout in a centered payment card."""
+    pending = st.session_state.get("pending_payment")
+    if not pending or pending.get("device_type") != device_type:
+        return
+
+    key_id, _ = get_razorpay_credentials()
+    if not key_id:
+        st.error("Razorpay Test API key is not configured.")
+        return
+
+    st.markdown(
+        """
+        <style>
+        .quados-payment-title {
+            text-align: center;
+            margin-top: 10px;
+            margin-bottom: 6px;
+        }
+        .quados-payment-subtitle {
+            text-align: center;
+            opacity: 0.75;
+            margin-bottom: 18px;
+        }
+        .quados-payment-card {
+            border: 1px solid rgba(128,128,128,0.28);
+            border-radius: 18px;
+            padding: 24px 26px 18px 26px;
+            box-shadow: 0 8px 28px rgba(0,0,0,0.08);
+            margin: 8px auto 18px auto;
+            max-width: 760px;
+        }
+        .quados-payment-amount {
+            text-align: center;
+            font-size: 30px;
+            font-weight: 800;
+            margin: 8px 0 2px 0;
+        }
+        .quados-payment-order {
+            text-align: center;
+            opacity: 0.72;
+            margin-bottom: 14px;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    st.markdown(
+        '<div class="quados-payment-title"><h2>💳 Complete Your Payment</h2></div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        '<div class="quados-payment-subtitle">Your configuration is ready. Complete the secure Razorpay payment to place the order.</div>',
+        unsafe_allow_html=True,
+    )
+
+    # The payment view is intentionally centered and shown instead of the
+    # configurator/cart while a payment is pending.
+    _, center_col, _ = st.columns([1, 2.2, 1], gap="large")
+
+    with center_col:
+        st.markdown(
+            f"""
+            <div class="quados-payment-card">
+                <div class="quados-payment-order">Order #{pending['order_id']} • {device_type}</div>
+                <div class="quados-payment-amount">₹{pending['final_price']:,.2f}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        checkout_html = build_checkout_html(
+            key_id=key_id,
+            razorpay_order_id=pending["razorpay_order_id"],
+            amount_rupees=pending["final_price"],
+            customer_name=pending.get("customer_name", ""),
+            customer_email=pending.get("customer_email", ""),
+            customer_phone=pending.get("customer_phone", ""),
+            description=f"QuadOS {device_type} Order #{pending['order_id']}",
+        )
+
+        # Keep the checkout UI interactive, but do not depend on its iframe
+        # being able to navigate the parent Streamlit page after payment.
+        st.components.v1.html(checkout_html, height=360, scrolling=False)
+
+        monitor_pending_razorpay_payment()
+
+        st.caption(
+            "Secure payment powered by Razorpay. QuadOS verifies the payment signature, "
+            "amount, and captured status before placing your order."
+        )
+
+
 # ============================================================
 # DATABASE
 # ============================================================
@@ -233,17 +615,6 @@ def get_discounted_cart_totals():
 create_tables()
 create_admin()
 create_query_table()
-
-
-# ============================================================
-# PAGE SETTINGS
-# ============================================================
-
-st.set_page_config(
-    page_title="QuadOS",
-    page_icon="Q",
-    layout="wide"
-)
 
 
 # ============================================================
@@ -316,6 +687,85 @@ st.markdown(
         color: #cccccc;
         max-width: 700px;
     }
+
+    .quados-sidebar-brand {
+        font-size: 24px;
+        font-weight: 800;
+        line-height: 1.1;
+        margin: 0 0 2px 0;
+    }
+
+    .quados-sidebar-subtitle {
+        font-size: 12px;
+        opacity: .58;
+        margin-bottom: 4px;
+    }
+
+    section[data-testid="stSidebar"] > div {
+        height: 100vh;
+    }
+
+    section[data-testid="stSidebar"] .block-container {
+        padding-top: 14px;
+        padding-bottom: 10px;
+    }
+
+    section[data-testid="stSidebar"] hr {
+        margin: 8px 0;
+        opacity: .35;
+    }
+
+    section[data-testid="stSidebar"] [data-testid="stRadio"] {
+        gap: 2px;
+    }
+
+    section[data-testid="stSidebar"] [data-testid="stRadio"] label {
+        margin-bottom: 0;
+    }
+
+    section[data-testid="stSidebar"] .stCaption {
+        line-height: 1.25;
+    }
+
+    /* QUADOS MODERN UI — presentation only */
+    .block-container { max-width: 1480px; padding-top: 2rem; padding-bottom: 3.5rem; }
+    h1, h2, h3 { letter-spacing: -0.02em; }
+    h1 { margin-bottom: .35rem; }
+    h2, h3 { margin-top: .75rem; }
+    [data-testid="stVerticalBlockBorderWrapper"] {
+        border-radius: 18px; border-color: rgba(255,255,255,.11);
+        background: rgba(12,15,25,.48); box-shadow: 0 12px 30px rgba(0,0,0,.10);
+    }
+    [data-testid="stMetric"] {
+        padding: 16px 18px; border: 1px solid rgba(255,255,255,.09);
+        border-radius: 15px; background: rgba(255,255,255,.035); min-height: 92px;
+    }
+    [data-testid="stMetricLabel"] { font-size: .78rem; opacity: .70; }
+    [data-testid="stMetricValue"] { font-weight: 800; letter-spacing: -.02em; }
+    div[data-baseweb="input"] > div, div[data-baseweb="select"] > div, textarea { border-radius: 10px !important; }
+    div[data-baseweb="input"] > div:focus-within, div[data-baseweb="select"] > div:focus-within, textarea:focus {
+        box-shadow: 0 0 0 1px rgba(167,139,250,.65) !important;
+    }
+    .stButton > button { border-radius: 10px; min-height: 42px; font-weight: 650; transition: transform .12s ease, box-shadow .12s ease; }
+    .stButton > button:hover { transform: translateY(-1px); box-shadow: 0 8px 20px rgba(0,0,0,.16); }
+    .quados-page-kicker { font-size: 11px; font-weight: 700; letter-spacing: .11em; text-transform: uppercase; opacity: .56; margin-bottom: 4px; }
+    .quados-page-title { font-size: 36px; line-height: 1.1; font-weight: 850; letter-spacing: -.025em; }
+    .quados-page-subtitle { margin-top: 7px; font-size: 14px; line-height: 1.55; opacity: .70; max-width: 850px; }
+    .quados-hero { padding: 28px 32px; border-radius: 22px; background: linear-gradient(135deg, rgba(25,31,55,.97), rgba(55,42,75,.92)); border: 1px solid rgba(255,255,255,.11); box-shadow: 0 18px 45px rgba(0,0,0,.18); margin-bottom: 24px; }
+    .quados-hero-title { font-size: clamp(30px, 4vw, 46px); font-weight: 850; line-height: 1.05; letter-spacing: -.035em; }
+    .quados-hero-text { margin-top: 10px; max-width: 820px; font-size: 15px; line-height: 1.65; opacity: .76; }
+    .quados-guide { display: grid; grid-template-columns: repeat(5,minmax(0,1fr)); gap: 8px; margin: 0 0 22px; }
+    .quados-guide-step { padding: 11px 12px; border-radius: 12px; border: 1px solid rgba(255,255,255,.09); background: rgba(255,255,255,.035); font-size: 12px; line-height: 1.35; }
+    .quados-guide-step b { display: block; font-size: 13px; margin-bottom: 2px; }
+    .quados-sidebar-user { padding: 12px 13px; border-radius: 12px; background: rgba(255,255,255,.045); border: 1px solid rgba(255,255,255,.08); margin-top: 8px; }
+    section[data-testid="stSidebar"] [data-testid="stRadio"] > div { gap: 4px; }
+    section[data-testid="stSidebar"] [data-testid="stRadio"] label { padding: 5px 7px; border-radius: 8px; }
+    [data-testid="stDataFrame"] { border-radius: 14px; overflow: hidden; border: 1px solid rgba(255,255,255,.08); }
+    [data-testid="stExpander"] { border-radius: 12px; border-color: rgba(255,255,255,.09); }
+    [data-testid="stAlert"] { border-radius: 12px; }
+    [data-testid="stTabs"] [role="tab"] { font-weight: 650; }
+    div[data-testid="stForm"] { border-radius: 16px; border-color: rgba(255,255,255,.10); background: rgba(255,255,255,.018); padding: 6px; }
+    @media (max-width: 900px) { .quados-guide { grid-template-columns: 1fr 1fr; } .block-container { padding-top: 1.2rem; } }
 
     </style>
     """,
@@ -390,11 +840,9 @@ def go_to_admin_page(page_name):
     allowed_pages = {
         "Admin Dashboard",
         "All Users",
-        "All Orders",
         "Manage Orders",
         "Analytics",
         "Queries",
-        "About",
     }
 
     if page_name in allowed_pages:
@@ -826,7 +1274,7 @@ def apply_mobile_profile():
     for key, options in option_groups.items():
         name = config.get(key)
         _set_profile_value(key, options, name)
-        if name in options and options[name] > 0:
+        if name in options:
             category, label = categories[key]
             add_to_cart(f"{label} - {name}", market_price(options[name]), category=category)
 
@@ -1245,7 +1693,8 @@ def validate_email(email):
         return False, "Email is required."
     if len(email) > 254:
         return False, "Email is too long."
- 
+    if not EMAIL_PATTERN.fullmatch(email):
+        return False, "Please enter a valid email address."
     return True, ""
 
 
@@ -1286,7 +1735,9 @@ def validate_registration(name, email, password, confirm_password, phone, addres
         return False, "Passwords do not match."
 
     phone = phone.strip()
-    if phone and not re.fullmatch(r"[0-9+()\- ]{7,20}", phone):
+    if not phone:
+        return False, "Phone number is required."
+    if not re.fullmatch(r"[0-9+()\- ]{7,20}", phone):
         return False, "Please enter a valid phone number."
 
     if len(address.strip()) > 250:
@@ -1316,8 +1767,8 @@ def validate_new_password(password, confirm_password):
 
 if not st.session_state.logged_in:
 
-    st.title("QuadOS")
-    st.subheader("Secure Login")
+    st.markdown("""<div class="quados-hero"><div class="quados-page-kicker">QuadOS 3.0 • Custom Device Platform</div><div class="quados-hero-title">Build it your way.</div><div class="quados-hero-text">Configure supported PCs and mobile devices, review transparent pricing, pay securely, and track every order from one place.</div></div>""", unsafe_allow_html=True)
+    st.subheader("Welcome back")
 
     login_tab, register_tab, forgot_tab = st.tabs(
         ["Login", "Create Account", "Forgot Password"]
@@ -1392,7 +1843,7 @@ if not st.session_state.logged_in:
             type="password",
             key="register_confirm_password"
         )
-        phone = st.text_input("Phone", key="register_phone")
+        phone = st.text_input("Phone (required)", key="register_phone")
         address = st.text_area("Address", key="register_address")
 
         if st.button(
@@ -1417,7 +1868,14 @@ if not st.session_state.logged_in:
                 )
 
                 if success:
+                    welcome_ok, welcome_message = send_welcome_email(
+                        email.strip().lower(), name.strip()
+                    )
                     st.success("Account created successfully.")
+                    if welcome_ok:
+                        st.info("A welcome email was sent to your registered email.")
+                    else:
+                        st.warning(f"Account created, but the welcome email could not be sent: {welcome_message}")
                     st.info("You can now login with your account.")
                 else:
                     st.error("This email is already registered.")
@@ -1491,7 +1949,13 @@ if not st.session_state.logged_in:
                         )
 
                         if changed:
+                            reset_email_ok, reset_email_message = send_password_reset_email(
+                                verified_user[2] if len(verified_user) > 2 else reset_email,
+                                verified_user[1] if len(verified_user) > 1 else "Customer"
+                            )
                             st.success("Password reset successfully. You can now login.")
+                            if not reset_email_ok:
+                                st.warning(f"Password was reset, but the confirmation email could not be sent: {reset_email_message}")
                         else:
                             st.error("Password could not be reset. Please try again.")
 
@@ -1507,6 +1971,11 @@ user_id = current_user[0]
 user_name = current_user[1]
 user_email = current_user[2]
 user_role = current_user[6]
+user_phone = current_user[4] if len(current_user) > 4 else ""
+
+# Razorpay Standard Checkout responses return to the same Streamlit app.
+if user_role != "admin":
+    handle_standard_razorpay_callback()
 
 
 # ============================================================
@@ -1515,9 +1984,11 @@ user_role = current_user[6]
 
 with st.sidebar:
 
-    st.title("◈ QuadOS")
-
-    st.caption("Custom Device Platform")
+    st.markdown(
+        '<div class="quados-sidebar-brand"><span>◈</span> QuadOS</div>'
+        '<div class="quados-sidebar-subtitle">Custom Device Platform</div>',
+        unsafe_allow_html=True
+    )
 
     st.divider()
 
@@ -1540,26 +2011,29 @@ with st.sidebar:
             if _admin_target in {
                 "Admin Dashboard",
                 "All Users",
-                "All Orders",
                 "Manage Orders",
                 "Analytics",
                 "Queries",
-                "About",
             }:
                 st.session_state.admin_navigation = _admin_target
 
-        page = st.radio(
-            "Navigation",
-          [
+        admin_pages = [
             "Admin Dashboard",
             "All Users",
-            "All Orders",
             "Manage Orders",
             "Analytics",
-            "Queries",
-            "About"
-          ],
-          key="admin_navigation"
+            "Queries"
+        ]
+
+        # Recover cleanly from an older session that still has the removed
+        # admin About page selected.
+        if st.session_state.get("admin_navigation") not in admin_pages:
+            st.session_state.admin_navigation = "Admin Dashboard"
+
+        page = st.radio(
+            "Navigation",
+            admin_pages,
+            key="admin_navigation"
         )
 
 
@@ -1611,14 +2085,11 @@ with st.sidebar:
 
     st.divider()
 
-    st.caption(
-        f"Logged in as: {user_name}"
+    st.markdown(
+        f"""<div class="quados-sidebar-user"><div style="font-size:11px;opacity:.55;text-transform:uppercase;letter-spacing:.08em;">Signed in</div><div style="font-size:14px;font-weight:750;margin-top:3px;">{user_name}</div><div style="font-size:11px;opacity:.62;margin-top:2px;">{user_role.capitalize()}</div></div>""",
+        unsafe_allow_html=True
     )
-
-    st.caption(
-        f"Role: {user_role}"
-    )
-
+    st.write("")
 
     if st.button(
         "Logout",
@@ -1630,12 +2101,6 @@ with st.sidebar:
         st.session_state.user = None
 
         st.rerun()
-
-
-    st.divider()
-
-    st.caption("QuadOS 3.0")
-
 
 
 
@@ -1689,24 +2154,7 @@ if page == "Admin Dashboard":
     # ADMIN DASHBOARD HEADER
     # ========================================================
 
-    st.markdown(
-        f"""
-        <div style="
-            padding:24px 28px;
-            border-radius:18px;
-            background:linear-gradient(135deg, rgba(20,25,45,.96), rgba(42,42,58,.90));
-            border:1px solid rgba(255,255,255,.10);
-            margin-bottom:22px;
-        ">
-            <div style="font-size:13px;opacity:.65;">QuadOS 3.0 • Administration</div>
-            <div style="font-size:34px;font-weight:800;margin-top:5px;">Admin Dashboard</div>
-            <div style="font-size:15px;opacity:.72;margin-top:6px;">
-                Welcome back, {user_name}. Here's the current platform overview.
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
+    st.markdown(f"""<div class="quados-hero"><div class="quados-page-kicker">QuadOS 3.0 • Administration</div><div class="quados-hero-title">Admin Dashboard</div><div class="quados-hero-text">Welcome back, {user_name}. Monitor orders, payments, customers and support activity from one structured workspace.</div></div>""", unsafe_allow_html=True)
 
     # ========================================================
     # LOAD DATA ONCE
@@ -1823,216 +2271,115 @@ if page == "Admin Dashboard":
     st.divider()
 
     # ========================================================
-    # 3. BUSINESS HEALTH — MODERN, COMPACT ANALYTICS
+    # 3. BUSINESS HEALTH — COMPLETE ORDER & PAYMENT SUMMARY
     # ========================================================
 
     st.subheader("📊 Business Health")
 
-    health1, health2, health3 = st.columns(3, gap="medium")
+    all_status_values = [
+        str(order[10] or "Placed")
+        for order in all_orders
+    ]
+    status_counts = {status_name: all_status_values.count(status_name) for status_name in ORDER_STATUS_OPTIONS}
 
-    with health1:
-        st.metric("Active / Placed Orders", f"{active_orders:,}")
+    # Keep payment statistics independent from order status.
+    payment_rows = []
+    for order in all_orders:
+        order_id = order[0]
+        payment_row = get_order_payment(order_id)
+        payment_status = str(payment_row[4] or "Pending") if payment_row else "Pending"
+        payment_rows.append(payment_status.title())
 
-    with health2:
+    payment_counts = {
+        "Paid": payment_rows.count("Paid"),
+        "Pending": payment_rows.count("Pending"),
+        "Failed": payment_rows.count("Failed"),
+    }
+
+    paid_non_cancelled = []
+    for order in all_orders:
+        payment_row = get_order_payment(order[0])
+        payment_status = str(payment_row[4] or "Pending").lower() if payment_row else "pending"
+        order_status = str(order[10] or "Placed")
+        if payment_status == "paid" and order_status != "Cancelled":
+            paid_non_cancelled.append(float(order[8] or 0))
+
+    total_recorded_orders = len(all_orders)
+    paid_orders = payment_counts["Paid"]
+    pending_payments = payment_counts["Pending"]
+    failed_payments = payment_counts["Failed"]
+    cancelled_orders = status_counts["Cancelled"]
+    total_revenue = sum(paid_non_cancelled)
+    average_order_value = total_revenue / len(paid_non_cancelled) if paid_non_cancelled else 0
+    highest_order = max(paid_non_cancelled) if paid_non_cancelled else 0
+
+    k1, k2, k3, k4 = st.columns(4, gap="medium")
+    with k1:
+        st.metric("Total Orders", f"{total_recorded_orders:,}")
+    with k2:
+        st.metric("Paid Orders", f"{paid_orders:,}")
+    with k3:
+        st.metric("Pending Payment", f"{pending_payments:,}")
+    with k4:
         st.metric("Cancelled Orders", f"{cancelled_orders:,}")
 
-    with health3:
-        st.metric("Average Order Value", f"₹{average_order_value:,.0f}")
+    k5, k6, k7, k8 = st.columns(4, gap="medium")
+    with k5:
+        st.metric("Failed Payment", f"{failed_payments:,}")
+    with k6:
+        st.metric("Total Revenue", f"₹{total_revenue:,.0f}")
+    with k7:
+        st.metric("Average Paid Order", f"₹{average_order_value:,.0f}")
+    with k8:
+        st.metric("Highest Paid Order", f"₹{highest_order:,.0f}")
 
-    st.write("")
+    st.caption("Order activity includes the complete recorded history. Revenue includes paid, non-cancelled orders only.")
 
-    # Keep only the two most useful charts:
-    # 1. Orders by device = where demand is coming from
-    # 2. Order status = current order health
-    device_counts = {}
+    # Complete status view instead of a misleading Active/Cancelled donut.
+    st.subheader("Order & Payment Status")
+    status_col, payment_col = st.columns(2, gap="large")
 
-    for order in all_orders:
-        device_name = str(order[3] or "Unknown")
-        device_counts[device_name] = device_counts.get(device_name, 0) + 1
-
-    if device_counts:
-        chart_col1, chart_col2 = st.columns(2, gap="large")
-
-        # ----------------------------------------------------
-        # CHART 1 - ORDERS BY DEVICE
-        # ----------------------------------------------------
-        with chart_col1:
-            st.markdown("#### Orders by Device")
-
-            labels = list(device_counts.keys())
-            values = list(device_counts.values())
-
-            fig, ax = plt.subplots(figsize=(6.2, 3.5))
-
-            # Modern QuadOS dark chart styling
-            fig.patch.set_facecolor("#111318")
-            ax.set_facecolor("#111318")
-
-            bars = ax.barh(
-                labels,
-                values,
-                height=0.52,
-                color="#F4C430"
-            )
-
-            max_value = max(values) if values else 1
-            ax.set_xlim(0, max_value * 1.22)
-
-            ax.invert_yaxis()
-
-            for bar, value in zip(bars, values):
-                ax.text(
-                    value + max_value * 0.03,
-                    bar.get_y() + bar.get_height() / 2,
-                    f"{value}",
-                    va="center",
-                    fontsize=10,
-                    fontweight="bold",
-                    color="#FFFFFF"
-                )
-
-            ax.set_xlabel("")
-            ax.set_ylabel("")
-            ax.tick_params(
-                axis="both",
-                colors="#D7D9DE",
-                labelsize=9,
-                length=0
-            )
-
-            ax.grid(
-                axis="x",
-                linestyle="--",
-                linewidth=0.7,
-                color="#FFFFFF",
-                alpha=0.12
-            )
-
+    with status_col:
+        status_items = [(name, value) for name, value in status_counts.items() if value > 0]
+        if status_items:
+            fig, ax = plt.subplots(figsize=(6.4, 3.7))
+            labels = [x[0] for x in status_items]
+            values = [x[1] for x in status_items]
+            bars = ax.barh(labels[::-1], values[::-1], color="#A78BFA", height=0.52)
+            ax.bar_label(bars, labels=[str(v) for v in values[::-1]], padding=5, color="#FFFFFF", fontsize=9)
+            ax.set_xlabel("Orders")
+            ax.set_title("Orders by Status", loc="left", fontsize=12, fontweight="bold", color="#FFFFFF")
+            ax.set_xlim(0, max(values) * 1.2 if values else 1)
+            ax.grid(axis="x", linestyle="--", alpha=0.2)
             ax.set_axisbelow(True)
-            ax.spines["top"].set_visible(False)
-            ax.spines["right"].set_visible(False)
-            ax.spines["left"].set_visible(False)
-            ax.spines["bottom"].set_color("#3A3D45")
-
-            ax.set_title(
-                "Orders by Device",
-                loc="left",
-                fontsize=12,
-                fontweight="bold",
-                color="#FFFFFF",
-                pad=12
-            )
-
+            ax.spines["top"].set_visible(False); ax.spines["right"].set_visible(False); ax.spines["left"].set_visible(False)
+            fig.patch.set_facecolor("#111318"); ax.set_facecolor("#111318")
+            ax.tick_params(colors="#D7D9DE", labelsize=9)
             plt.tight_layout()
-            st.pyplot(fig, use_container_width=True)
-            plt.close(fig)
+            st.pyplot(fig, use_container_width=True); plt.close(fig)
+        else:
+            st.info("No order status data yet.")
 
-        # ----------------------------------------------------
-        # CHART 2 - ORDER STATUS
-        # ----------------------------------------------------
-        with chart_col2:
-            st.markdown("#### Order Status")
-
-            status_labels = ["Active / Placed", "Cancelled"]
-            status_values = [active_orders, cancelled_orders]
-
-            # Remove zero-value slices so the chart stays clean.
-            filtered = [
-                (label, value)
-                for label, value in zip(status_labels, status_values)
-                if value > 0
-            ]
-
-            fig, ax = plt.subplots(figsize=(6.2, 3.5))
-
-            fig.patch.set_facecolor("#111318")
-            ax.set_facecolor("#111318")
-
-            if filtered:
-                filtered_labels = [item[0] for item in filtered]
-                filtered_values = [item[1] for item in filtered]
-
-                status_colors = [
-                    "#22C55E" if label == "Active / Placed" else "#EF4444"
-                    for label in filtered_labels
-                ]
-
-                wedges, _ = ax.pie(
-                    filtered_values,
-                    startangle=90,
-                    counterclock=False,
-                    colors=status_colors,
-                    wedgeprops={
-                        "width": 0.38,
-                        "edgecolor": "#111318",
-                        "linewidth": 3
-                    }
-                )
-
-                total_status = sum(filtered_values)
-
-                ax.text(
-                    0,
-                    0.08,
-                    f"{total_status}",
-                    ha="center",
-                    va="center",
-                    fontsize=22,
-                    fontweight="bold",
-                    color="#FFFFFF"
-                )
-
-                ax.text(
-                    0,
-                    -0.16,
-                    "Total Orders",
-                    ha="center",
-                    va="center",
-                    fontsize=9,
-                    color="#AEB3BE"
-                )
-
-                legend_labels = [
-                    f"{label}  •  {value}"
-                    for label, value in zip(filtered_labels, filtered_values)
-                ]
-
-                ax.legend(
-                    wedges,
-                    legend_labels,
-                    loc="center left",
-                    bbox_to_anchor=(0.98, 0.5),
-                    frameon=False,
-                    fontsize=9,
-                    labelcolor="#D7D9DE"
-                )
-            else:
-                ax.text(
-                    0.5,
-                    0.5,
-                    "No order data",
-                    transform=ax.transAxes,
-                    ha="center",
-                    va="center",
-                    color="#AEB3BE",
-                    fontsize=11
-                )
-
-            ax.set_title(
-                "Order Status",
-                loc="left",
-                fontsize=12,
-                fontweight="bold",
-                color="#FFFFFF",
-                pad=12
-            )
-
+    with payment_col:
+        payment_items = [(name, value) for name, value in payment_counts.items() if value > 0]
+        if payment_items:
+            fig, ax = plt.subplots(figsize=(6.4, 3.7))
+            labels = [x[0] for x in payment_items]
+            values = [x[1] for x in payment_items]
+            bars = ax.barh(labels[::-1], values[::-1], color="#38BDF8", height=0.52)
+            ax.bar_label(bars, labels=[str(v) for v in values[::-1]], padding=5, color="#FFFFFF", fontsize=9)
+            ax.set_xlabel("Orders")
+            ax.set_title("Orders by Payment Status", loc="left", fontsize=12, fontweight="bold", color="#FFFFFF")
+            ax.set_xlim(0, max(values) * 1.2 if values else 1)
+            ax.grid(axis="x", linestyle="--", alpha=0.2)
+            ax.set_axisbelow(True)
+            ax.spines["top"].set_visible(False); ax.spines["right"].set_visible(False); ax.spines["left"].set_visible(False)
+            fig.patch.set_facecolor("#111318"); ax.set_facecolor("#111318")
+            ax.tick_params(colors="#D7D9DE", labelsize=9)
             plt.tight_layout()
-            st.pyplot(fig, use_container_width=True)
-            plt.close(fig)
-
-    else:
-        st.info("Business activity will appear after orders are placed.")
+            st.pyplot(fig, use_container_width=True); plt.close(fig)
+        else:
+            st.info("No payment status data yet.")
 
     st.divider()
 
@@ -2235,9 +2582,7 @@ if page == "Admin Dashboard":
 
 elif page == "All Users":
 
-    st.title("All Users")
-
-    st.write("View all registered QuadOS users in a table.")
+    st.markdown("""<div class="quados-page-kicker">Administration</div><div class="quados-page-title">All Users</div><div class="quados-page-subtitle">Review registered customer accounts and use the available account-management actions when required.</div>""", unsafe_allow_html=True)
 
     users = get_all_users()
 
@@ -2381,92 +2726,12 @@ elif page == "All Users":
 
 
 # ============================================================
-# ALL ORDERS
-# ============================================================
-
-elif page == "All Orders":
-
-    st.title("All Orders")
-
-    st.write(
-        "View all orders placed through QuadOS in a tabular format."
-    )
-
-    st.write("")
-
-    orders = get_all_orders_with_users()
-
-    if orders:
-
-        order_rows = []
-
-        for order in orders:
-
-            order_id = order[0]
-            customer_name = order[1]
-            customer_email = order[2]
-            device_type = order[3]
-            operating_system = order[4]
-            configuration = order[5]
-            accessories = order[6]
-            subtotal = order[7]
-            final_price = order[8]
-            order_date = order[9]
-            status = order[10]
-
-            order_rows.append({
-                "Order ID": order_id,
-                "Customer": customer_name,
-                "Email": customer_email,
-                "Device": device_type,
-                "Operating System": operating_system,
-                "Configuration": (
-                    configuration
-                    if configuration
-                    else "No configuration details"
-                ),
-                "Accessories": (
-                    accessories
-                    if accessories
-                    else "No accessories"
-                ),
-                "Subtotal": f"₹{float(subtotal):,.2f}",
-                "Final Price": f"₹{float(final_price):,.2f}",
-                "Order Date": str(order_date),
-                "Status": status
-            })
-
-        orders_df = pd.DataFrame(order_rows)
-
-        st.dataframe(
-            orders_df,
-            use_container_width=True,
-            hide_index=True,
-            height=500
-        )
-
-        st.caption(
-            f"Total orders displayed: {len(orders_df)}"
-        )
-
-    else:
-
-        st.info(
-            "No orders have been placed yet."
-        )
-
-
-# ============================================================
 # MANAGE ORDERS
 # ============================================================
 
 elif page == "Manage Orders":
 
-    st.title("Manage Orders")
-
-    st.caption(
-        "View, inspect and manage all customer orders from one place."
-    )
+    st.markdown("""<div class="quados-page-kicker">Administration</div><div class="quados-page-title">Manage Orders</div><div class="quados-page-subtitle">Inspect customer configurations, reconcile payment status and update order progress from one workspace.</div>""", unsafe_allow_html=True)
 
     orders = get_all_orders_with_users()
 
@@ -2594,6 +2859,56 @@ elif page == "Manage Orders":
             if accessories
             else "No accessories"
         )
+
+        # ----------------------------------------------------
+        # PAYMENT MANAGEMENT
+        # ----------------------------------------------------
+
+        payment_details = get_order_payment(order_id)
+        current_payment_status = str(payment_details[4] or "Pending") if payment_details else "Pending"
+
+        st.divider()
+        st.subheader("Payment Management")
+        st.caption("Use these actions for orders whose payment must be reconciled manually.")
+
+        pay_col1, pay_col2, pay_col3 = st.columns(3, gap="medium")
+        with pay_col1:
+            st.metric("Payment Status", current_payment_status)
+        with pay_col2:
+            payment_date_value = "—"
+            if payment_details:
+                full_order = get_order_by_id(order_id)
+                if full_order and len(full_order) > 15:
+                    payment_date_value = full_order[15] or "—"
+            st.metric("Payment Date", str(payment_date_value))
+        with pay_col3:
+            if current_payment_status.lower() == "paid":
+                st.success("Payment confirmed")
+            elif current_payment_status.lower() == "failed":
+                st.error("Payment failed")
+            else:
+                st.warning("Payment pending")
+
+        if current_payment_status.lower() != "paid" and status != "Cancelled":
+            pay_action1, pay_action2 = st.columns(2, gap="medium")
+            with pay_action1:
+                if st.button("Mark as Paid", type="primary", key=f"manual_paid_{order_id}", use_container_width=True):
+                    if mark_order_paid(order_id):
+                        st.session_state["flash_success_message"] = f"Order #{order_id} marked as paid."
+                        st.rerun()
+                    else:
+                        st.error("Could not mark this order as paid. Check that it is not cancelled or already paid.")
+            with pay_action2:
+                if st.button("Mark as Failed", key=f"manual_failed_{order_id}", use_container_width=True):
+                    if update_order_payment(order_id, "Failed"):
+                        st.session_state["flash_success_message"] = f"Payment for Order #{order_id} marked as failed."
+                        st.rerun()
+                    else:
+                        st.error("Could not update the payment status.")
+        elif current_payment_status.lower() == "paid":
+            st.info("This payment is already confirmed. Paid orders cannot be changed back to Pending or Failed.")
+        else:
+            st.info("Cancelled orders cannot be marked as paid.")
 
         # ----------------------------------------------------
         # UPDATE ORDER STATUS
@@ -2731,89 +3046,75 @@ elif page == "Manage Orders":
 
 elif page == "Analytics":
 
-    st.title("QuadOS Analytics")
-    st.write("A clear view of orders, revenue, customer buying patterns and trends.")
+    st.markdown("""<div class="quados-page-kicker">Administration</div><div class="quados-page-title">QuadOS Analytics</div><div class="quados-page-subtitle">Understand order activity, payment outcomes, device choices and business trends using recorded order history.</div>""", unsafe_allow_html=True)
+    st.caption("Complete order, payment, revenue and exception history.")
     st.divider()
-
-    # ========================================================
-    # GET DATA
-    # ========================================================
 
     data = get_order_data()
 
     if data.empty:
         st.info("No order data available for analytics yet.")
-
     else:
-        # ====================================================
-        # PREPARE DATA
-        # ====================================================
-
         data = data.copy()
         data["order_date"] = pd.to_datetime(data["order_date"], errors="coerce")
+        data["payment_date"] = pd.to_datetime(data["payment_date"], errors="coerce")
+        data["cancelled_date"] = pd.to_datetime(data["cancelled_date"], errors="coerce")
         data["final_price"] = pd.to_numeric(data["final_price"], errors="coerce").fillna(0)
         data["device_type"] = data["device_type"].fillna("Unknown").astype(str)
         data["operating_system"] = data["operating_system"].fillna("Unknown").astype(str)
-        data = data.dropna(subset=["order_date"])
-        data["date"] = data["order_date"].dt.normalize()
+        data["status"] = data["status"].fillna("Placed").astype(str)
+        data["payment_status"] = data["payment_status"].fillna("Pending").astype(str)
 
         total_orders = len(data)
-        total_revenue = data["final_price"].sum()
-        average_order_value = data["final_price"].mean() if total_orders else 0
+        paid = data["payment_status"].str.lower().eq("paid")
+        cancelled = data["status"].str.lower().eq("cancelled")
+        paid_active = paid & ~cancelled
+        pending = data["payment_status"].str.lower().eq("pending")
+        failed = data["payment_status"].str.lower().eq("failed")
+
+        total_revenue = data.loc[paid_active, "final_price"].sum()
+        paid_values = data.loc[paid_active, "final_price"]
+        average_paid = paid_values.mean() if not paid_values.empty else 0
+        highest_paid = paid_values.max() if not paid_values.empty else 0
 
         # ====================================================
-        # SUMMARY CARDS
+        # COMPLETE SUMMARY
         # ====================================================
+        st.subheader("📊 Complete Summary")
+        cards = st.columns(4, gap="medium")
+        metrics = [
+            ("Total Orders", total_orders, None),
+            ("Paid Orders", int(paid.sum()), None),
+            ("Pending Payment", int(pending.sum()), None),
+            ("Cancelled Orders", int(cancelled.sum()), None),
+            ("Failed Payment", int(failed.sum()), None),
+            ("Total Revenue", total_revenue, "₹"),
+            ("Average Paid Order", average_paid, "₹"),
+            ("Highest Paid Order", highest_paid, "₹"),
+        ]
+        for index, (label, value, prefix) in enumerate(metrics):
+            with cards[index % 4]:
+                if prefix:
+                    st.metric(label, f"{prefix}{float(value):,.0f}")
+                else:
+                    st.metric(label, f"{int(value):,}")
+            if index % 4 == 3 and index < len(metrics) - 1:
+                cards = st.columns(4, gap="medium")
 
-        col1, col2, col3, col4 = st.columns(4, gap="medium")
-
-        with col1:
-            st.metric("Total Orders", f"{total_orders:,}")
-
-        with col2:
-            st.metric("Total Revenue", f"₹{total_revenue:,.0f}")
-
-        with col3:
-            st.metric("Average Order Value", f"₹{average_order_value:,.0f}")
-
-        with col4:
-            highest_order = data["final_price"].max() if total_orders else 0
-            st.metric("Highest Order", f"₹{highest_order:,.0f}")
-
+        st.caption("Order-volume metrics use the complete recorded history. Revenue metrics use paid, non-cancelled orders only.")
         st.divider()
 
-        # ====================================================
-        # ANALYTICS CHART STYLE
-        # ====================================================
-
-        CHART_BG = "#111827"
-        TEXT = "#E5E7EB"
-        MUTED = "#9CA3AF"
-        GRID = "#374151"
-        BLUE = "#38BDF8"
-        ORANGE = "#F59E0B"
-        GREEN = "#34D399"
-        PURPLE = "#A78BFA"
-        RED = "#FB7185"
-        TEAL = "#2DD4BF"
+        CHART_BG = "#111827"; TEXT = "#E5E7EB"; MUTED = "#9CA3AF"; GRID = "#374151"
+        BLUE = "#38BDF8"; ORANGE = "#F59E0B"; GREEN = "#34D399"; PURPLE = "#A78BFA"; RED = "#FB7185"; TEAL = "#2DD4BF"
 
         def analytics_style(ax, title, ylabel=""):
-            ax.set_title(
-                title,
-                fontsize=13,
-                fontweight="bold",
-                color=TEXT,
-                loc="left",
-                pad=12,
-            )
+            ax.set_title(title, fontsize=13, fontweight="bold", color=TEXT, loc="left", pad=12)
             ax.set_ylabel(ylabel, color=MUTED, fontsize=9)
             ax.tick_params(axis="both", colors=MUTED, labelsize=9)
             ax.grid(axis="y", linestyle="--", linewidth=0.7, alpha=0.35, color=GRID)
             ax.set_axisbelow(True)
-            ax.spines["top"].set_visible(False)
-            ax.spines["right"].set_visible(False)
-            ax.spines["left"].set_color(GRID)
-            ax.spines["bottom"].set_color(GRID)
+            ax.spines["top"].set_visible(False); ax.spines["right"].set_visible(False)
+            ax.spines["left"].set_color(GRID); ax.spines["bottom"].set_color(GRID)
             ax.set_facecolor(CHART_BG)
 
         def finish_chart(fig):
@@ -2823,331 +3124,151 @@ elif page == "Analytics":
             plt.close(fig)
 
         def rupee_short(value):
-            value = float(value)
-            if abs(value) >= 10_000_000:
-                return f"₹{value / 10_000_000:.1f}Cr"
-            if abs(value) >= 100_000:
-                return f"₹{value / 100_000:.1f}L"
-            if abs(value) >= 1_000:
-                return f"₹{value / 1_000:.0f}K"
+            value=float(value)
+            if abs(value)>=10_000_000: return f"₹{value/10_000_000:.2f}Cr"
+            if abs(value)>=100_000: return f"₹{value/100_000:.2f}L"
+            if abs(value)>=1_000: return f"₹{value/1_000:.0f}K"
             return f"₹{value:.0f}"
 
         # ====================================================
-        # ROW 1 — DEVICE PERFORMANCE
+        # ORDER & PAYMENT STATUS
         # ====================================================
+        st.subheader("📦 Order & Payment Status")
+        c1, c2 = st.columns(2, gap="large")
 
-        st.subheader("📦 Device Performance")
-        col1, col2 = st.columns(2, gap="large")
-
-        # ----------------------------------------------------
-        # CHART 1 - ORDERS BY DEVICE
-        # ----------------------------------------------------
-
-        with col1:
-            device_orders = data["device_type"].value_counts().sort_values()
-
+        with c1:
+            status_counts = data["status"].value_counts().reindex(ORDER_STATUS_OPTIONS, fill_value=0)
+            status_counts = status_counts[status_counts > 0]
             fig, ax = plt.subplots(figsize=(7, 4))
-            bars = ax.barh(
-                device_orders.index,
-                device_orders.values,
-                color=BLUE,
-                height=0.55,
-            )
-
-            ax.bar_label(
-                bars,
-                labels=[f"{int(v):,}" for v in device_orders.values],
-                padding=5,
-                fontsize=9,
-                color=TEXT,
-            )
-            ax.set_xlabel("Number of orders", color=MUTED, fontsize=9)
-            analytics_style(ax, "Orders by Device", "")
-            ax.grid(axis="x", linestyle="--", linewidth=0.7, alpha=0.3, color=GRID)
-            ax.grid(axis="y", visible=False)
+            bars=ax.barh(status_counts.index[::-1], status_counts.values[::-1], color=PURPLE, height=.55)
+            ax.bar_label(bars, labels=[str(int(v)) for v in status_counts.values[::-1]], padding=5, color=TEXT, fontsize=9)
+            ax.set_xlabel("Orders", color=MUTED, fontsize=9); analytics_style(ax,"Orders by Status","")
+            ax.grid(axis="x", linestyle="--", linewidth=.7, alpha=.3, color=GRID); ax.grid(axis="y", visible=False)
             finish_chart(fig)
 
-        # ----------------------------------------------------
-        # CHART 2 - REVENUE BY DEVICE
-        # ----------------------------------------------------
-
-        with col2:
-            device_revenue = (
-                data.groupby("device_type")["final_price"]
-                .sum()
-                .sort_values()
-            )
-
-            fig, ax = plt.subplots(figsize=(7, 4))
-            bars = ax.barh(
-                device_revenue.index,
-                device_revenue.values,
-                color=ORANGE,
-                height=0.55,
-            )
-
-            ax.bar_label(
-                bars,
-                labels=[rupee_short(v) for v in device_revenue.values],
-                padding=5,
-                fontsize=9,
-                color=TEXT,
-            )
-            ax.set_xlabel("Revenue", color=MUTED, fontsize=9)
-            analytics_style(ax, "Revenue by Device", "")
-            ax.grid(axis="x", linestyle="--", linewidth=0.7, alpha=0.3, color=GRID)
-            ax.grid(axis="y", visible=False)
+        with c2:
+            payment_counts=data["payment_status"].str.title().value_counts().reindex(["Paid","Pending","Failed"],fill_value=0)
+            payment_counts=payment_counts[payment_counts>0]
+            fig, ax=plt.subplots(figsize=(7,4))
+            bars=ax.barh(payment_counts.index[::-1],payment_counts.values[::-1],color=BLUE,height=.55)
+            ax.bar_label(bars,labels=[str(int(v)) for v in payment_counts.values[::-1]],padding=5,color=TEXT,fontsize=9)
+            ax.set_xlabel("Orders",color=MUTED,fontsize=9); analytics_style(ax,"Orders by Payment Status","")
+            ax.grid(axis="x",linestyle="--",linewidth=.7,alpha=.3,color=GRID); ax.grid(axis="y",visible=False)
             finish_chart(fig)
 
         st.divider()
 
         # ====================================================
-        # ROW 2 — CUSTOMER CHOICES
+        # DEVICE PERFORMANCE
         # ====================================================
+        st.subheader("🖥️ Device Performance")
+        c1,c2=st.columns(2,gap="large")
+        with c1:
+            counts=data["device_type"].value_counts().sort_values()
+            fig,ax=plt.subplots(figsize=(7,4)); bars=ax.barh(counts.index,counts.values,color=BLUE,height=.55)
+            ax.bar_label(bars,labels=[str(int(v)) for v in counts.values],padding=5,color=TEXT,fontsize=9)
+            ax.set_xlabel("Number of orders",color=MUTED,fontsize=9); analytics_style(ax,"All Orders by Device","")
+            ax.grid(axis="x",linestyle="--",linewidth=.7,alpha=.3,color=GRID);ax.grid(axis="y",visible=False);finish_chart(fig)
+        with c2:
+            revenue=data.loc[paid_active].groupby("device_type")["final_price"].sum().sort_values()
+            if revenue.empty: st.info("No paid revenue data yet.")
+            else:
+                fig,ax=plt.subplots(figsize=(7,4)); bars=ax.barh(revenue.index,revenue.values,color=ORANGE,height=.55)
+                ax.bar_label(bars,labels=[rupee_short(v) for v in revenue.values],padding=5,color=TEXT,fontsize=9)
+                ax.set_xlabel("Paid revenue",color=MUTED,fontsize=9);analytics_style(ax,"Paid Revenue by Device","")
+                ax.grid(axis="x",linestyle="--",linewidth=.7,alpha=.3,color=GRID);ax.grid(axis="y",visible=False);finish_chart(fig)
 
+        st.divider()
+
+        # ====================================================
+        # CUSTOMER CHOICES
+        # ====================================================
         st.subheader("🧩 Customer Choices")
-        col1, col2 = st.columns(2, gap="large")
-
-        # ----------------------------------------------------
-        # CHART 3 - ORDERS BY OPERATING SYSTEM
-        # ----------------------------------------------------
-
-        with col1:
-            os_orders = data["operating_system"].value_counts().sort_values()
-
-            fig, ax = plt.subplots(figsize=(7, 4))
-            bars = ax.barh(
-                os_orders.index,
-                os_orders.values,
-                color=GREEN,
-                height=0.55,
-            )
-
-            ax.bar_label(
-                bars,
-                labels=[f"{int(v):,}" for v in os_orders.values],
-                padding=5,
-                fontsize=9,
-                color=TEXT,
-            )
-            ax.set_xlabel("Number of orders", color=MUTED, fontsize=9)
-            analytics_style(ax, "Orders by Operating System", "")
-            ax.grid(axis="x", linestyle="--", linewidth=0.7, alpha=0.3, color=GRID)
-            ax.grid(axis="y", visible=False)
-            finish_chart(fig)
-
-        # ----------------------------------------------------
-        # CHART 4 - REVENUE SHARE BY OS
-        # ----------------------------------------------------
-
-        with col2:
-            os_revenue = (
-                data.groupby("operating_system")["final_price"]
-                .sum()
-                .sort_values(ascending=False)
-            )
-
-            fig, ax = plt.subplots(figsize=(7, 4))
-            pie_colors = [BLUE, PURPLE, TEAL, ORANGE, RED, GREEN]
-
-            wedges, _, autotexts = ax.pie(
-                os_revenue.values,
-                autopct=lambda p: f"{p:.0f}%" if p >= 4 else "",
-                startangle=90,
-                counterclock=False,
-                colors=pie_colors[:len(os_revenue)],
-                wedgeprops={"width": 0.42, "edgecolor": CHART_BG, "linewidth": 2},
-                pctdistance=0.78,
-            )
-
-            for text in autotexts:
-                text.set_color(TEXT)
-                text.set_fontsize(9)
-                text.set_fontweight("bold")
-
-            legend_labels = [
-                f"{name} — {rupee_short(value)}"
-                for name, value in os_revenue.items()
-            ]
-            ax.legend(
-                wedges,
-                legend_labels,
-                title="Revenue",
-                loc="center left",
-                bbox_to_anchor=(0.98, 0.5),
-                fontsize=8,
-                title_fontsize=9,
-                frameon=False,
-                labelcolor=TEXT,
-            )
-            ax.set_title(
-                "Revenue Share by Operating System",
-                fontsize=13,
-                fontweight="bold",
-                color=TEXT,
-                loc="left",
-                pad=12,
-            )
-            ax.set_facecolor(CHART_BG)
-            finish_chart(fig)
+        c1,c2=st.columns(2,gap="large")
+        with c1:
+            os_orders=data["operating_system"].value_counts().sort_values()
+            fig,ax=plt.subplots(figsize=(7,4)); bars=ax.barh(os_orders.index,os_orders.values,color=GREEN,height=.55)
+            ax.bar_label(bars,labels=[str(int(v)) for v in os_orders.values],padding=5,color=TEXT,fontsize=9)
+            ax.set_xlabel("Number of orders",color=MUTED,fontsize=9);analytics_style(ax,"All Orders by Operating System","")
+            ax.grid(axis="x",linestyle="--",linewidth=.7,alpha=.3,color=GRID);ax.grid(axis="y",visible=False);finish_chart(fig)
+        with c2:
+            os_revenue=data.loc[paid_active].groupby("operating_system")["final_price"].sum().sort_values()
+            if os_revenue.empty: st.info("No paid revenue data yet.")
+            else:
+                fig,ax=plt.subplots(figsize=(7,4));bars=ax.barh(os_revenue.index,os_revenue.values,color=TEAL,height=.55)
+                ax.bar_label(bars,labels=[rupee_short(v) for v in os_revenue.values],padding=5,color=TEXT,fontsize=9)
+                ax.set_xlabel("Paid revenue",color=MUTED,fontsize=9);analytics_style(ax,"Paid Revenue by Operating System","")
+                ax.grid(axis="x",linestyle="--",linewidth=.7,alpha=.3,color=GRID);ax.grid(axis="y",visible=False);finish_chart(fig)
 
         st.divider()
 
         # ====================================================
-        # ROW 3 — BUSINESS TRENDS
+        # BUSINESS TRENDS
         # ====================================================
-
         st.subheader("📈 Business Trends")
-        col1, col2 = st.columns(2, gap="large")
-
-        # ----------------------------------------------------
-        # CHART 5 - ORDERS OVER TIME
-        # ----------------------------------------------------
-
-        with col1:
-            orders_time = data.groupby("date").size().sort_index()
-
-            fig, ax = plt.subplots(figsize=(7, 4))
-            ax.plot(
-                orders_time.index,
-                orders_time.values,
-                marker="o",
-                markersize=5,
-                linewidth=2.5,
-                color=BLUE,
-            )
-            ax.fill_between(
-                orders_time.index,
-                orders_time.values,
-                alpha=0.12,
-                color=BLUE,
-            )
-
-            for date, value in orders_time.items():
-                ax.annotate(
-                    str(int(value)),
-                    (date, value),
-                    textcoords="offset points",
-                    xytext=(0, 8),
-                    ha="center",
-                    fontsize=8,
-                    color=TEXT,
-                )
-
-            analytics_style(ax, "Orders Over Time", "Orders")
-            ax.xaxis.set_major_locator(mdates.AutoDateLocator())
-            ax.xaxis.set_major_formatter(mdates.DateFormatter("%d %b"))
-            ax.tick_params(axis="x", rotation=30)
-            ax.grid(axis="x", visible=False)
-            finish_chart(fig)
-
-        # ----------------------------------------------------
-        # CHART 6 - REVENUE OVER TIME
-        # ----------------------------------------------------
-
-        with col2:
-            revenue_time = data.groupby("date")["final_price"].sum().sort_index()
-
-            fig, ax = plt.subplots(figsize=(7, 4))
-            ax.plot(
-                revenue_time.index,
-                revenue_time.values,
-                marker="o",
-                markersize=5,
-                linewidth=2.5,
-                color=ORANGE,
-            )
-            ax.fill_between(
-                revenue_time.index,
-                revenue_time.values,
-                alpha=0.12,
-                color=ORANGE,
-            )
-
-            analytics_style(ax, "Revenue Over Time", "Revenue")
-            ax.xaxis.set_major_locator(mdates.AutoDateLocator())
-            ax.xaxis.set_major_formatter(mdates.DateFormatter("%d %b"))
-            ax.tick_params(axis="x", rotation=30)
-            ax.grid(axis="x", visible=False)
-            ax.yaxis.set_major_formatter(
-                plt.FuncFormatter(lambda x, pos: rupee_short(x))
-            )
-            finish_chart(fig)
+        c1,c2=st.columns(2,gap="large")
+        with c1:
+            trend=data.dropna(subset=["order_date"]).groupby(data["order_date"].dt.normalize()).size().sort_index()
+            fig,ax=plt.subplots(figsize=(7,4)); ax.plot(trend.index,trend.values,marker="o",markersize=5,linewidth=2.5,color=BLUE)
+            ax.fill_between(trend.index,trend.values,alpha=.12,color=BLUE)
+            analytics_style(ax,"All Orders Over Time","Orders");ax.xaxis.set_major_locator(mdates.AutoDateLocator());ax.xaxis.set_major_formatter(mdates.DateFormatter("%d %b"));ax.tick_params(axis="x",rotation=30);ax.grid(axis="x",visible=False);finish_chart(fig)
+        with c2:
+            revenue_data=data.loc[paid_active & data["payment_date"].notna()].copy()
+            if revenue_data.empty: st.info("No paid revenue dates available yet.")
+            else:
+                trend=revenue_data.groupby(revenue_data["payment_date"].dt.normalize())["final_price"].sum().sort_index()
+                fig,ax=plt.subplots(figsize=(7,4));ax.plot(trend.index,trend.values,marker="o",markersize=5,linewidth=2.5,color=ORANGE);ax.fill_between(trend.index,trend.values,alpha=.12,color=ORANGE)
+                analytics_style(ax,"Paid Revenue Over Time","Revenue");ax.xaxis.set_major_locator(mdates.AutoDateLocator());ax.xaxis.set_major_formatter(mdates.DateFormatter("%d %b"));ax.tick_params(axis="x",rotation=30);ax.grid(axis="x",visible=False);ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x,pos:rupee_short(x)));finish_chart(fig)
 
         st.divider()
 
         # ====================================================
-        # ROW 4 — ORDER VALUE INSIGHTS
+        # EXCEPTIONS & RECOVERY
         # ====================================================
+        st.subheader("⚠️ Order Exceptions & Recovery")
+        c1,c2,c3=st.columns(3,gap="medium")
+        with c1: st.metric("Cancelled",int(cancelled.sum()))
+        with c2: st.metric("Payment Pending",int(pending.sum()))
+        with c3: st.metric("Payment Failed",int(failed.sum()))
 
+        exception_frames=[]
+        for label,mask,date_col in [("Cancelled",cancelled,"cancelled_date"),("Payment Pending",pending,"order_date"),("Payment Failed",failed,"order_date")]:
+            subset=data.loc[mask].copy()
+            subset["event_date"]=pd.to_datetime(subset[date_col],errors="coerce")
+            if not subset.empty:
+                counts=subset.dropna(subset=["event_date"]).groupby(subset["event_date"].dt.normalize()).size()
+                for dt,val in counts.items(): exception_frames.append({"date":dt,"type":label,"count":int(val)})
+        if exception_frames:
+            ex=pd.DataFrame(exception_frames)
+            fig,ax=plt.subplots(figsize=(14,4.5))
+            for label,color in [("Cancelled",RED),("Payment Pending",PURPLE),("Payment Failed",ORANGE)]:
+                part=ex[ex["type"]==label].sort_values("date")
+                if not part.empty: ax.plot(part["date"],part["count"],marker="o",linewidth=2,label=label,color=color)
+            analytics_style(ax,"Cancelled, Pending and Failed Orders Over Time","Orders")
+            ax.xaxis.set_major_locator(mdates.AutoDateLocator());ax.xaxis.set_major_formatter(mdates.DateFormatter("%d %b"));ax.tick_params(axis="x",rotation=30);ax.grid(axis="x",visible=False);ax.legend(frameon=False,fontsize=9)
+            finish_chart(fig)
+        else:
+            st.info("No cancelled, pending or failed order events to display.")
+
+        st.divider()
+
+        # ====================================================
+        # ORDER VALUE INSIGHTS
+        # ====================================================
         st.subheader("💰 Order Value Insights")
-        col1, col2 = st.columns(2, gap="large")
+        c1,c2=st.columns(2,gap="large")
+        with c1:
+            if paid_values.empty: st.info("No paid order values available yet.")
+            else:
+                fig,ax=plt.subplots(figsize=(7,4));ax.hist(paid_values,bins=min(10,max(4,len(paid_values))),color=PURPLE,alpha=.85,edgecolor=CHART_BG,linewidth=1.2)
+                ax.axvline(average_paid,color=ORANGE,linewidth=2,linestyle="--",label=f"Average: {rupee_short(average_paid)}");ax.legend(frameon=False,fontsize=9,labelcolor=TEXT);ax.xaxis.set_major_formatter(plt.FuncFormatter(lambda x,pos:rupee_short(x)));ax.set_xlabel("Paid order value",color=MUTED,fontsize=9);analytics_style(ax,"Paid Order Value Distribution","Number of Orders");finish_chart(fig)
+        with c2:
+            avg_device=data.loc[paid_active].groupby("device_type")["final_price"].mean().sort_values()
+            if avg_device.empty: st.info("No paid order values available yet.")
+            else:
+                fig,ax=plt.subplots(figsize=(7,4));bars=ax.barh(avg_device.index,avg_device.values,color=PURPLE,height=.55);ax.bar_label(bars,labels=[rupee_short(v) for v in avg_device.values],padding=5,color=TEXT,fontsize=9);ax.set_xlabel("Average paid order value",color=MUTED,fontsize=9);analytics_style(ax,"Average Paid Order Value by Device","");ax.grid(axis="x",linestyle="--",linewidth=.7,alpha=.3,color=GRID);ax.grid(axis="y",visible=False);finish_chart(fig)
 
-        # ----------------------------------------------------
-        # CHART 7 - ORDER VALUE DISTRIBUTION
-        # ----------------------------------------------------
-
-        with col1:
-            fig, ax = plt.subplots(figsize=(7, 4))
-            ax.hist(
-                data["final_price"],
-                bins=min(10, max(4, total_orders)),
-                color=PURPLE,
-                alpha=0.85,
-                edgecolor=CHART_BG,
-                linewidth=1.2,
-            )
-
-            ax.axvline(
-                average_order_value,
-                color=ORANGE,
-                linewidth=2,
-                linestyle="--",
-                label=f"Average: {rupee_short(average_order_value)}",
-            )
-            ax.legend(frameon=False, fontsize=9, labelcolor=TEXT)
-            ax.xaxis.set_major_formatter(
-                plt.FuncFormatter(lambda x, pos: rupee_short(x))
-            )
-            ax.set_xlabel("Order value", color=MUTED, fontsize=9)
-            analytics_style(ax, "Order Value Distribution", "Number of Orders")
-            finish_chart(fig)
-
-        # ----------------------------------------------------
-        # CHART 8 - AVERAGE ORDER VALUE BY DEVICE
-        # ----------------------------------------------------
-
-        with col2:
-            average_device_price = (
-                data.groupby("device_type")["final_price"]
-                .mean()
-                .sort_values()
-            )
-
-            fig, ax = plt.subplots(figsize=(7, 4))
-            bars = ax.barh(
-                average_device_price.index,
-                average_device_price.values,
-                color=PURPLE,
-                height=0.55,
-            )
-
-            ax.bar_label(
-                bars,
-                labels=[rupee_short(v) for v in average_device_price.values],
-                padding=5,
-                fontsize=9,
-                color=TEXT,
-            )
-            ax.set_xlabel("Average order value", color=MUTED, fontsize=9)
-            analytics_style(ax, "Average Order Value by Device", "")
-            ax.grid(axis="x", linestyle="--", linewidth=0.7, alpha=0.3, color=GRID)
-            ax.grid(axis="y", visible=False)
-            finish_chart(fig)
-
-        st.caption(
-            "Tip: horizontal bars make category comparisons easier, while the line charts show how orders and revenue change over time."
-        )
+        st.caption("Order dates describe when orders were created. Revenue trends use the payment date. Cancelled trends use the cancellation date when available.")
 
 
 # ============================================================
@@ -3159,125 +3280,140 @@ elif page == "Analytics":
 
 elif page == "Home":
 
+    # ========================================================
+    # WELCOME HERO
+    # ========================================================
+    st.markdown(f"""<div class="quados-hero"><div class="quados-page-kicker">QuadOS 3.0 • Customer Workspace</div><div class="quados-hero-title">Welcome, {user_name}</div><div class="quados-hero-text">Choose a builder below, select the components you need, review the cart summary, and complete payment when your configuration is ready.</div></div>""", unsafe_allow_html=True)
+
+    # ========================================================
+    # QUICK STATS
+    # ========================================================
+    order_count = get_user_order_count(user_id)
+    cart_count = len(st.session_state.get("cart", []))
+
+    stat1, stat2, stat3 = st.columns(3, gap="medium")
+    with stat1:
+        st.metric("My Orders", order_count)
+    with stat2:
+        st.metric("Cart Items", cart_count)
+    with stat3:
+        st.metric("Supported Devices", "PC + Mobile", help="PC and Mobile configurators")
+
+    st.write("")
+
+    # ========================================================
+    # BUILDERS
+    # ========================================================
+    st.subheader("Start Building")
+    st.caption("Choose a device and configure it to match your needs.")
+
+    pc_col, mobile_col = st.columns(2, gap="large")
+
+    with pc_col:
+        st.markdown(
+            """
+            <div style="padding:24px;border:1px solid rgba(255,255,255,.12);border-radius:18px;
+            min-height:185px;background:rgba(255,255,255,.035);">
+                <div style="font-size:30px;">🖥️</div>
+                <div style="font-size:24px;font-weight:750;margin-top:6px;">Custom PC</div>
+                <div style="opacity:.72;margin-top:8px;line-height:1.5;">
+                    Configure a Windows PC or macOS setup with supported processors, memory, storage, graphics, cooling and peripherals.
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+        st.write("")
+        st.button(
+            "Open PC Configurator →",
+            key="home_pc_builder",
+            use_container_width=True,
+            on_click=go_to_page,
+            args=("PC Configurator",)
+        )
+
+    with mobile_col:
+        st.markdown(
+            """
+            <div style="padding:24px;border:1px solid rgba(255,255,255,.12);border-radius:18px;
+            min-height:185px;background:rgba(255,255,255,.035);">
+                <div style="font-size:30px;">📱</div>
+                <div style="font-size:24px;font-weight:750;margin-top:6px;">Custom Mobile</div>
+                <div style="opacity:.72;margin-top:8px;line-height:1.5;">
+                    Configure a supported iPhone or Android combination with display, battery, camera, memory, storage and other options.
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+        st.write("")
+        st.button(
+            "Open Mobile Configurator →",
+            key="home_mobile_builder",
+            use_container_width=True,
+            on_click=go_to_page,
+            args=("Mobile Configurator",)
+        )
+
+    st.write("")
+
+    # ========================================================
+    # OFFERS
+    # ========================================================
     render_offers_section()
 
     # ========================================================
-    st.markdown(
-        f"""
-        <div class="main-title">
-            Welcome, {user_name}
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-
-    st.markdown(
-        """
-        <div class="subtitle">
-            Build your own custom device with QuadOS Configurator
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-
-    st.write("")
-
-    st.write(
-        "Choose a device category to start building."
-    )
-
-    st.write("")
-
-
+    # HOW IT WORKS + SHORTCUTS
     # ========================================================
-    # ORDER COUNT
-    # ========================================================
+    left, right = st.columns([1.45, 1], gap="large")
 
-    order_count = get_user_order_count(user_id)
-
-    st.metric(
-        "My Orders",
-        order_count
-    )
-
-    st.write("")
-
-    st.subheader("Build Your Device")
-
-    st.write("")
-
-
-
-    # ========================================================
-    # DEVICE OPTIONS
-    # ========================================================
-    
-    col1, col2 = st.columns(2)
-    
-    
-    # ========================================================
-    # PC CARD
-    # ========================================================
-    
-    with col1:
-    
-        pc_card = st.container(border=True)
-    
-        with pc_card:
-        
-            st.subheader("Custom PC")
-    
-            st.write(
-                "Build a custom Windows or macOS computer "
-                "using your preferred components."
+    with left:
+        st.subheader("How It Works")
+        steps = [
+            ("1", "Choose a builder", "Start with PC or Mobile Configurator."),
+            ("2", "Select components", "Choose the supported options for your device."),
+            ("3", "Review your cart", "Check selected items, pricing and applicable discounts."),
+            ("4", "Place and track", "Complete payment and follow the order from My Orders."),
+        ]
+        for number, title, detail in steps:
+            st.markdown(
+                f"""
+                <div style="display:flex;gap:14px;align-items:flex-start;margin:0 0 14px 0;">
+                    <div style="min-width:30px;height:30px;border-radius:50%;border:1px solid rgba(255,255,255,.2);
+                    display:flex;align-items:center;justify-content:center;font-weight:700;">{number}</div>
+                    <div><b>{title}</b><div style="opacity:.68;font-size:13px;margin-top:2px;">{detail}</div></div>
+                </div>
+                """,
+                unsafe_allow_html=True
             )
-    
-            st.write("")
-    
 
-            if st.button(
-                "Start PC Builder",
-                key="home_pc_builder",
-                use_container_width=True,
-                on_click=go_to_page,
-                args=("PC Configurator",)
-            ):
-                pass
+    with right:
+        st.subheader("Quick Access")
+        st.button(
+            "🛒 View My Orders",
+            key="home_orders",
+            use_container_width=True,
+            on_click=go_to_page,
+            args=("My Orders",)
+        )
+        st.button(
+            "👤 Open My Profile",
+            key="home_profile",
+            use_container_width=True,
+            on_click=go_to_page,
+            args=("My Profile",)
+        )
+        st.button(
+            "💬 Help & Queries",
+            key="home_help",
+            use_container_width=True,
+            on_click=go_to_page,
+            args=("Help & Queries",)
+        )
 
-    
-    # ========================================================
-    # MOBILE CARD
-    # ========================================================
-    
-    with col2:
-    
-        mobile_card = st.container(border=True)
-    
-        with mobile_card:
-        
-            st.subheader("Custom Mobile")
-    
-            st.write(
-                "Configure an iPhone or Android device "
-                "with your preferred features."
-            )
-    
-            st.write("")
-    
-
-            if st.button(
-                "Start Mobile Builder",
-                key="home_mobile_builder",
-                use_container_width=True,
-                on_click=go_to_page,
-                args=("Mobile Configurator",)
-            ):
-                pass
-
-
-    
     st.write("")
     st.divider()
+    st.caption("QuadOS helps you configure supported devices, review pricing, place orders and track them in one place.")
 
 
 # ============================================================
@@ -3286,13 +3422,20 @@ elif page == "Home":
 
 elif page == "PC Configurator":
 
+    if (
+        st.session_state.get("pending_payment")
+        and st.session_state["pending_payment"].get("device_type") == "PC"
+    ):
+        render_pending_payment("PC")
+        st.stop()
+
     render_offers_section()
 
     st.title("PC Configurator")
 
-    st.write(
-        "Build your custom PC by selecting each component."
-    )
+    st.write("Build your custom PC by selecting each component.")
+    st.markdown("""<div class="quados-guide"><div class="quados-guide-step"><b>1 · Platform</b>Windows or macOS</div><div class="quados-guide-step"><b>2 · Profile</b>Start with a ready setup</div><div class="quados-guide-step"><b>3 · Components</b>Choose required parts</div><div class="quados-guide-step"><b>4 · Accessories</b>Add extras if needed</div><div class="quados-guide-step"><b>5 · Review & Pay</b>Check the cart and place order</div></div>""", unsafe_allow_html=True)
+    st.info("Choose a platform and profile first, complete the required components, add accessories if you want them, then review the Order Summary on the right. The Place Order button becomes available when the configuration is complete.")
 
     # ========================================================
     # PC CONFIGURATOR LAYOUT
@@ -3849,7 +3992,8 @@ elif page == "PC Configurator":
 
         with st.container(border=True):
 
-            st.subheader("🛒 Your Cart")
+            st.subheader("🛒 Order Summary")
+            st.caption("Selected items, discounts and the final payable amount appear here.")
 
             if not st.session_state.cart:
 
@@ -3923,7 +4067,7 @@ elif page == "PC Configurator":
                     st.session_state.cart, "PC", cart_os
                 )
                 if pc_cart_valid:
-                    st.success("✓ Configuration is complete and eligible to place the order.")
+                    st.success("✓ Configuration complete — your order is ready for payment.")
                 else:
                     st.warning(pc_cart_message)
 
@@ -3932,7 +4076,7 @@ elif page == "PC Configurator":
                     key="place_cart_order",
                     use_container_width=True,
                     type="primary",
-                    disabled=not pc_cart_valid
+                    disabled=(not pc_cart_valid) or ("pending_payment" in st.session_state)
                 ):
 
                     valid_order, validation_message = validate_order_cart(
@@ -3986,23 +4130,11 @@ elif page == "PC Configurator":
                         # Snapshot cart items BEFORE creating the order or clearing the cart.
                         email_order_items = [dict(item) for item in st.session_state.cart]
 
-                        create_order(
+                        payment_ok, payment_message, order_id = initiate_razorpay_payment(
                             user_id=user_id,
-                            device_type="PC",
-                            operating_system=cart_os,
-                            configuration=configuration_text,
-                            accessories=accessories_text,
-                            subtotal=cart_subtotal,
-                            discount=cart_discount,
-                            final_price=cart_final,
-                            order_date=order_date
-                        )
-
-                        order_id = get_latest_order_id(user_id)
-                        email_ok, email_message = send_order_confirmation_email(
-                            recipient_email=user_email,
-                            customer_name=user_name,
-                            order_id=order_id,
+                            user_name=user_name,
+                            user_email=user_email,
+                            user_phone=user_phone,
                             device_type="PC",
                             operating_system=cart_os,
                             configuration=configuration_text,
@@ -4014,20 +4146,15 @@ elif page == "PC Configurator":
                             order_items=email_order_items
                         )
 
-                        st.session_state.order_success_message = (
-                            "Your order has been placed successfully. "
-                            + ("Confirmation email sent to your registered email." if email_ok
-                               else "Your order was saved, but the confirmation email could not be sent.")
-                        )
-                        st.session_state.order_email_status = email_message
+                        if payment_ok:
+                            st.success(
+                                f"Order #{order_id} created. Complete the Razorpay payment below."
+                            )
+                            st.rerun()
+                        else:
+                            st.error(payment_message)
 
-                        clear_cart()
-
-                        st.session_state.cart_operating_system = (
-                            "Windows"
-                        )
-
-                        st.rerun()
+                        st.session_state.cart_operating_system = cart_os
 
                 if st.button(
                     "Clear Cart",
@@ -4044,11 +4171,19 @@ elif page == "PC Configurator":
                     st.rerun()
 
 
+
 # ============================================================
 # MOBILE CONFIGURATOR
 # ============================================================
 
 elif page == "Mobile Configurator":
+
+    if (
+        st.session_state.get("pending_payment")
+        and st.session_state["pending_payment"].get("device_type") == "Mobile"
+    ):
+        render_pending_payment("Mobile")
+        st.stop()
 
     render_offers_section()
 
@@ -4061,9 +4196,9 @@ elif page == "Mobile Configurator":
 
     st.title("Mobile Configurator")
 
-    st.write(
-        "Create your custom smartphone."
-    )
+    st.write("Create your custom smartphone.")
+    st.markdown("""<div class="quados-guide"><div class="quados-guide-step"><b>1 · Platform</b>Choose iPhone or Android</div><div class="quados-guide-step"><b>2 · Profile</b>Start from a use case</div><div class="quados-guide-step"><b>3 · Components</b>Complete the device</div><div class="quados-guide-step"><b>4 · Accessories</b>Add useful extras</div><div class="quados-guide-step"><b>5 · Review & Pay</b>Check the cart and place order</div></div>""", unsafe_allow_html=True)
+    st.info("Choose iPhone or Android, select a profile or build manually, complete the required components, and review the Order Summary before placing the order.")
 
     mobile_left, mobile_right = st.columns(
         [3, 1.25],
@@ -4484,7 +4619,8 @@ elif page == "Mobile Configurator":
 
         with st.container(border=True):
 
-            st.subheader("🛒 Your Cart")
+            st.subheader("🛒 Order Summary")
+            st.caption("Selected items, discounts and the final payable amount appear here.")
 
             if not st.session_state.cart:
 
@@ -4549,7 +4685,7 @@ elif page == "Mobile Configurator":
                     st.session_state.cart, "Mobile", mobile_cart_os
                 )
                 if mobile_cart_valid:
-                    st.success("✓ Configuration is complete and eligible to place the order.")
+                    st.success("✓ Configuration complete — your order is ready for payment.")
                 else:
                     st.warning(mobile_cart_message)
 
@@ -4558,7 +4694,7 @@ elif page == "Mobile Configurator":
                     key="mobile_cart_place_order",
                     use_container_width=True,
                     type="primary",
-                    disabled=not mobile_cart_valid
+                    disabled=(not mobile_cart_valid) or ("pending_payment" in st.session_state)
                 ):
 
                     valid_order, validation_message = validate_order_cart(
@@ -4609,23 +4745,11 @@ elif page == "Mobile Configurator":
                         # Snapshot cart items BEFORE creating the order or clearing the cart.
                         email_order_items = [dict(item) for item in st.session_state.cart]
 
-                        create_order(
+                        payment_ok, payment_message, order_id = initiate_razorpay_payment(
                             user_id=user_id,
-                            device_type="Mobile",
-                            operating_system=mobile_cart_os,
-                            configuration=configuration_text,
-                            accessories=accessories_text,
-                            subtotal=mobile_cart_subtotal,
-                            discount=mobile_cart_discount,
-                            final_price=mobile_cart_final,
-                            order_date=order_date
-                        )
-
-                        order_id = get_latest_order_id(user_id)
-                        email_ok, email_message = send_order_confirmation_email(
-                            recipient_email=user_email,
-                            customer_name=user_name,
-                            order_id=order_id,
+                            user_name=user_name,
+                            user_email=user_email,
+                            user_phone=user_phone,
                             device_type="Mobile",
                             operating_system=mobile_cart_os,
                             configuration=configuration_text,
@@ -4637,16 +4761,13 @@ elif page == "Mobile Configurator":
                             order_items=email_order_items
                         )
 
-                        st.session_state.order_success_message = (
-                            "Your mobile order has been placed successfully. "
-                            + ("Confirmation email sent to your registered email." if email_ok
-                               else "Your order was saved, but the confirmation email could not be sent.")
-                        )
-                        st.session_state.order_email_status = email_message
-
-                        clear_cart()
-                        st.session_state.cart_device_type = "Mobile"
-                        st.rerun()
+                        if payment_ok:
+                            st.success(
+                                f"Order #{order_id} created. Complete the Razorpay payment below."
+                            )
+                            st.rerun()
+                        else:
+                            st.error(payment_message)
 
                 if st.button(
                     "Clear Cart",
@@ -4659,17 +4780,14 @@ elif page == "Mobile Configurator":
                     st.rerun()
 
 
+
 # ============================================================
 # MY ORDERS
 # ============================================================
 
 elif page == "My Orders":
 
-    st.title("My Orders")
-
-    st.write(
-        "View your orders and cancel an order when needed."
-    )
+    st.markdown("""<div class="quados-page-kicker">Customer workspace</div><div class="quados-page-title">My Orders</div><div class="quados-page-subtitle">Track your configurations, payment status and order progress. Unpaid orders can be cancelled; paid orders are protected from accidental cancellation.</div>""", unsafe_allow_html=True)
 
     st.divider()
 
@@ -4830,8 +4948,7 @@ elif page == "My Orders":
 
 elif page == "My Profile":
 
-    st.title("My Profile")
-    st.caption("Manage and review your QuadOS account information.")
+    st.markdown("""<div class="quados-page-kicker">Account</div><div class="quados-page-title">My Profile</div><div class="quados-page-subtitle">Review your account details, order activity and support history in one place.</div>""", unsafe_allow_html=True)
 
     # --------------------------------------------------------
     # PROFILE HEADER
@@ -5092,243 +5209,55 @@ elif page == "Help & Queries":
 # ABOUT
 # ============================================================
 
-elif page == "About":
+elif page == "About" and user_role != "admin":
 
-    st.title("About QuadOS")
-    st.write(
-        "QuadOS is a custom device configuration platform for building, "
-        "pricing and ordering personalized PCs and smartphones."
+    st.markdown(
+        """
+        <div style="padding:24px 28px;border-radius:18px;
+        background:linear-gradient(135deg, rgba(25,31,55,.97), rgba(55,42,75,.92));
+        border:1px solid rgba(255,255,255,.10);margin-bottom:20px;">
+            <div style="font-size:12px;opacity:.58;letter-spacing:.10em;text-transform:uppercase;">QuadOS 3.0</div>
+            <div style="font-size:32px;font-weight:800;margin-top:4px;">About QuadOS</div>
+            <div style="font-size:14px;opacity:.72;margin-top:6px;">A simple platform for configuring supported devices and managing orders.</div>
+        </div>
+        """,
+        unsafe_allow_html=True
     )
 
-    st.divider()
+    st.subheader("What QuadOS Does")
+    st.write(
+        "QuadOS lets users configure supported PC and mobile devices, review prices and applicable bundle discounts, pay securely through the integrated Razorpay checkout, and manage their orders."
+    )
 
-    # --------------------------------------------------------
-    # FEATURES
-    # --------------------------------------------------------
-    st.subheader("Features")
+    info1, info2 = st.columns(2, gap="large")
 
-    feature_col1, feature_col2 = st.columns(2)
+    with info1:
+        st.markdown(
+            """
+            **🖥️ PC Configurator**  
+            Build supported Windows PC or macOS configurations.
 
-    with feature_col1:
-        st.markdown("""
-        **🖥️ PC Configurator**  
-        Build Windows and macOS PC combinations using configurable components.
+            **📱 Mobile Configurator**  
+            Configure supported iPhone or Android options.
 
-        **📱 Mobile Configurator**  
-        Configure iPhone and Android devices with supported hardware options.
-
-        **🛒 Smart Cart**  
-        Selected components and accessories are added directly to the cart.
-
-        **📦 Order Management**  
-        Users can view their orders and cancel eligible orders.
-        """)
-
-    with feature_col2:
-        st.markdown("""
-        **💰 Dynamic Pricing**  
-        Component prices are combined to calculate the final order value.
-
-        **🔐 Authentication**  
-        User registration, login and password reset are supported.
-
-        **📊 Analytics**  
-        Admins can view order, revenue and device analytics.
-
-        **👨‍💼 Admin Management**  
-        Admins can manage users, orders and submitted queries.
-        """)
-
-    st.divider()
-
-    # --------------------------------------------------------
-    # HOW IT WORKS
-    # --------------------------------------------------------
-    st.subheader("How QuadOS Works")
-    st.markdown("""
-    **1. Create an account or log in**  
-    **2. Choose PC or Mobile Configurator**  
-    **3. Select a complete device combination**  
-    **4. Add components/accessories to the cart**  
-    **5. Review the cart and place the order**  
-    **6. Track the order from My Orders**
-    """)
-
-    st.divider()
-
-    # --------------------------------------------------------
-    # SUPPORTED DEVICES
-    # --------------------------------------------------------
-    st.subheader("Supported Devices")
-    supported_col1, supported_col2 = st.columns(2)
-
-    with supported_col1:
-        st.markdown("""
-        ### 🖥️ PC
-        - Windows PC
-        - macOS PC
-        - CPU / Processor
-        - Motherboard
-        - RAM
-        - Storage
-        - GPU
-        - Cooling
-        - Cabinet
-        - Monitor and peripherals
-        """)
-
-    with supported_col2:
-        st.markdown("""
-        ### 📱 Mobile
-        - iPhone
-        - Android
-        - Display
-        - Battery
-        - RAM
-        - Storage
-        - Processor
-        - Camera
-        - Connectivity
-        - Build / Frame / Color
-        """)
-
-    st.divider()
-
-    # --------------------------------------------------------
-    # CONTACT
-    # --------------------------------------------------------
-    st.subheader("Contact & Support")
-    st.write("Need help with QuadOS? Use the query form below and your question will be sent to the QuadOS support database.")
-
-    contact_col1, contact_col2 = st.columns(2)
-
-    with contact_col1:
-        st.info("📧 Support: Submit a question through the Help & Query section below.")
-
-    with contact_col2:
-        st.info("🕐 Support Requests: Your submission is recorded with date and time for admin review.")
-
-    st.divider()
-
-    # --------------------------------------------------------
-    # FAQ / HELP
-    # --------------------------------------------------------
-    st.subheader("Help & Frequently Asked Questions")
-
-    with st.expander("Can I order only one PC component?"):
-        st.write("No. A PC order must contain the required combination of components. Accessories can be ordered separately.")
-
-    with st.expander("Can I order only an accessory?"):
-        st.write("Yes. Accessory-only orders are allowed.")
-
-    with st.expander("Can I cancel my order?"):
-        st.write("Yes. Go to My Orders and select an eligible order to cancel it.")
-
-    with st.expander("Where can I see my orders?"):
-        st.write("Open My Orders from the user navigation menu.")
-
-    with st.expander("What happens after I submit a question?"):
-        st.write("Your question is stored in the separate QuadOS queries database and becomes visible to the admin in the Queries section.")
-
-    st.divider()
-
-    # --------------------------------------------------------
-    # ASK A QUESTION
-    # --------------------------------------------------------
-    st.subheader("Ask a Question / Send a Help Query")
-    st.write("Submit your question below. It will be saved in the QuadOS queries database for admin review.")
-
-    with st.form("user_query_form", clear_on_submit=True):
-
-        query_subject = st.text_input(
-            "Subject",
-            placeholder="Example: Login problem"
+            **🛒 Cart & Pricing**  
+            Review selections, accessories and automatic bundle discounts before ordering.
+            """
         )
 
-        query_question = st.text_area(
-            "Your Question",
-            placeholder="Describe your question or problem...",
-            height=150
+    with info2:
+        st.markdown(
+            """
+            **💳 Razorpay Payments**  
+            Complete orders through the integrated Razorpay checkout.
+
+            **📦 My Orders**  
+            View your orders and their current status.
+
+            **💬 Help & Queries**  
+            Contact QuadOS support and continue your conversations.
+            """
         )
-
-        submit_query = st.form_submit_button(
-            "Send Question",
-            type="primary",
-            use_container_width=True
-        )
-
-        if submit_query:
-
-            if not query_subject.strip():
-                st.error("Please enter a subject.")
-
-            elif not query_question.strip():
-                st.error("Please enter your question.")
-
-            else:
-                submitted_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-                query_id = create_user_query(
-                    user_id=user_id,
-                    name=user_name,
-                    email=user_email,
-                    subject=query_subject,
-                    question=query_question,
-                    submitted_at=submitted_at
-                )
-
-                st.success(
-                    f"Your question has been submitted successfully. Query ID: #{query_id}"
-                )
 
     st.divider()
-
-    # --------------------------------------------------------
-    # FUTURE ROADMAP
-    # --------------------------------------------------------
-    st.subheader("Future Roadmap")
-    st.markdown("""
-    - 🤖 Machine Learning price prediction
-    - 🧾 Invoice generation
-    - 📈 Additional analytics and insights
-    - 🔔 Improved order notifications
-    - 💬 Enhanced customer support workflow
-    """)
-# ============================================================
-# FLASH SUCCESS / STATUS MESSAGES
-# ============================================================
-# These messages are displayed after the full page content, so
-# order confirmations no longer appear at the top.
-flash_success_message = st.session_state.pop(
-    "flash_success_message",
-    None
-)
-
-order_status_email_message = st.session_state.pop(
-    "order_status_email_message",
-    None
-)
-if order_status_email_message:
-    if "could not be sent" in order_status_email_message.lower():
-        st.warning(order_status_email_message)
-    else:
-        st.info(order_status_email_message)
-
-if flash_success_message:
-    st.success(flash_success_message)
-
-flash_order_success_message = st.session_state.pop(
-    "order_success_message",
-    None
-)
-
-if flash_order_success_message:
-    st.success(flash_order_success_message)
-
-flash_order_email_status = st.session_state.pop(
-    "order_email_status",
-    None
-)
-
-if flash_order_email_status and "sent to" not in flash_order_email_status.lower():
-    st.warning(flash_order_email_status)
+    st.caption("For account details, open My Profile. For support, use Help & Queries.")
