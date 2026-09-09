@@ -2,7 +2,8 @@
 import streamlit as st
 import base64
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 import pandas as pd
 import re
 import os
@@ -134,6 +135,31 @@ from query_ui import (
     render_user_help_queries,
     render_admin_queries
 )
+
+# ============================================================
+# DATE/TIME HELPERS
+# ============================================================
+# QuadOS stores timestamps in UTC so hosted deployments behave
+# consistently. User-facing dates are always displayed in IST.
+QUADOS_LOCAL_TIMEZONE = ZoneInfo("Asia/Kolkata")
+
+def utc_now_string():
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+def format_local_datetime(value):
+    """Convert a stored UTC timestamp to India Standard Time."""
+    if not value:
+        return "—"
+    try:
+        text = str(value).strip()
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        local_value = parsed.astimezone(QUADOS_LOCAL_TIMEZONE)
+        return local_value.strftime("%d %b %Y, %I:%M:%S %p")
+    except (TypeError, ValueError, OverflowError):
+        return str(value)
+
 
 ORDER_STATUS_OPTIONS = [
     "Placed",
@@ -688,6 +714,43 @@ st.markdown(
         max-width: 700px;
     }
 
+    /* Keep Streamlit's default typography compact and consistent. */
+    .stApp h1 {
+        font-size: 2.15rem !important;
+        line-height: 1.2 !important;
+    }
+
+    .stApp h2 {
+        font-size: 1.65rem !important;
+        line-height: 1.25 !important;
+    }
+
+    .stApp h3 {
+        font-size: 1.35rem !important;
+        line-height: 1.3 !important;
+    }
+
+    .stApp p,
+    .stApp label,
+    .stApp .stCaption {
+        font-size: 0.95rem;
+    }
+
+    /* Prevent st.metric values (especially dates) from becoming oversized. */
+    .stApp [data-testid="stMetricValue"] {
+        font-size: 1.85rem !important;
+        line-height: 1.15 !important;
+    }
+
+    .stApp [data-testid="stMetricLabel"] {
+        font-size: 0.9rem !important;
+        line-height: 1.25 !important;
+    }
+
+    .stApp [data-testid="stMetricDelta"] {
+        font-size: 0.8rem !important;
+    }
+
     .quados-sidebar-brand {
         font-size: 24px;
         font-weight: 800;
@@ -726,46 +789,6 @@ st.markdown(
     section[data-testid="stSidebar"] .stCaption {
         line-height: 1.25;
     }
-
-    /* QUADOS MODERN UI — presentation only */
-    .block-container { max-width: 1480px; padding-top: 2rem; padding-bottom: 3.5rem; }
-    h1, h2, h3 { letter-spacing: -0.02em; }
-    h1 { margin-bottom: .35rem; }
-    h2, h3 { margin-top: .75rem; }
-    [data-testid="stVerticalBlockBorderWrapper"] {
-        border-radius: 18px; border-color: rgba(255,255,255,.11);
-        background: rgba(12,15,25,.48); box-shadow: 0 12px 30px rgba(0,0,0,.10);
-    }
-    [data-testid="stMetric"] {
-        padding: 16px 18px; border: 1px solid rgba(255,255,255,.09);
-        border-radius: 15px; background: rgba(255,255,255,.035); min-height: 92px;
-    }
-    [data-testid="stMetricLabel"] { font-size: .78rem; opacity: .70; }
-    [data-testid="stMetricValue"] { font-weight: 800; letter-spacing: -.02em; }
-    div[data-baseweb="input"] > div, div[data-baseweb="select"] > div, textarea { border-radius: 10px !important; }
-    div[data-baseweb="input"] > div:focus-within, div[data-baseweb="select"] > div:focus-within, textarea:focus {
-        box-shadow: 0 0 0 1px rgba(167,139,250,.65) !important;
-    }
-    .stButton > button { border-radius: 10px; min-height: 42px; font-weight: 650; transition: transform .12s ease, box-shadow .12s ease; }
-    .stButton > button:hover { transform: translateY(-1px); box-shadow: 0 8px 20px rgba(0,0,0,.16); }
-    .quados-page-kicker { font-size: 11px; font-weight: 700; letter-spacing: .11em; text-transform: uppercase; opacity: .56; margin-bottom: 4px; }
-    .quados-page-title { font-size: 36px; line-height: 1.1; font-weight: 850; letter-spacing: -.025em; }
-    .quados-page-subtitle { margin-top: 7px; font-size: 14px; line-height: 1.55; opacity: .70; max-width: 850px; }
-    .quados-hero { padding: 28px 32px; border-radius: 22px; background: linear-gradient(135deg, rgba(25,31,55,.97), rgba(55,42,75,.92)); border: 1px solid rgba(255,255,255,.11); box-shadow: 0 18px 45px rgba(0,0,0,.18); margin-bottom: 24px; }
-    .quados-hero-title { font-size: clamp(30px, 4vw, 46px); font-weight: 850; line-height: 1.05; letter-spacing: -.035em; }
-    .quados-hero-text { margin-top: 10px; max-width: 820px; font-size: 15px; line-height: 1.65; opacity: .76; }
-    .quados-guide { display: grid; grid-template-columns: repeat(5,minmax(0,1fr)); gap: 8px; margin: 0 0 22px; }
-    .quados-guide-step { padding: 11px 12px; border-radius: 12px; border: 1px solid rgba(255,255,255,.09); background: rgba(255,255,255,.035); font-size: 12px; line-height: 1.35; }
-    .quados-guide-step b { display: block; font-size: 13px; margin-bottom: 2px; }
-    .quados-sidebar-user { padding: 12px 13px; border-radius: 12px; background: rgba(255,255,255,.045); border: 1px solid rgba(255,255,255,.08); margin-top: 8px; }
-    section[data-testid="stSidebar"] [data-testid="stRadio"] > div { gap: 4px; }
-    section[data-testid="stSidebar"] [data-testid="stRadio"] label { padding: 5px 7px; border-radius: 8px; }
-    [data-testid="stDataFrame"] { border-radius: 14px; overflow: hidden; border: 1px solid rgba(255,255,255,.08); }
-    [data-testid="stExpander"] { border-radius: 12px; border-color: rgba(255,255,255,.09); }
-    [data-testid="stAlert"] { border-radius: 12px; }
-    [data-testid="stTabs"] [role="tab"] { font-weight: 650; }
-    div[data-testid="stForm"] { border-radius: 16px; border-color: rgba(255,255,255,.10); background: rgba(255,255,255,.018); padding: 6px; }
-    @media (max-width: 900px) { .quados-guide { grid-template-columns: 1fr 1fr; } .block-container { padding-top: 1.2rem; } }
 
     </style>
     """,
@@ -1767,8 +1790,8 @@ def validate_new_password(password, confirm_password):
 
 if not st.session_state.logged_in:
 
-    st.markdown("""<div class="quados-hero"><div class="quados-page-kicker">QuadOS 3.0 • Custom Device Platform</div><div class="quados-hero-title">Build it your way.</div><div class="quados-hero-text">Configure supported PCs and mobile devices, review transparent pricing, pay securely, and track every order from one place.</div></div>""", unsafe_allow_html=True)
-    st.subheader("Welcome back")
+    st.title("QuadOS")
+    st.subheader("Secure Login")
 
     login_tab, register_tab, forgot_tab = st.tabs(
         ["Login", "Create Account", "Forgot Password"]
@@ -2085,11 +2108,14 @@ with st.sidebar:
 
     st.divider()
 
-    st.markdown(
-        f"""<div class="quados-sidebar-user"><div style="font-size:11px;opacity:.55;text-transform:uppercase;letter-spacing:.08em;">Signed in</div><div style="font-size:14px;font-weight:750;margin-top:3px;">{user_name}</div><div style="font-size:11px;opacity:.62;margin-top:2px;">{user_role.capitalize()}</div></div>""",
-        unsafe_allow_html=True
+    st.caption(
+        f"Logged in as: {user_name}"
     )
-    st.write("")
+
+    st.caption(
+        f"Role: {user_role}"
+    )
+
 
     if st.button(
         "Logout",
@@ -2154,7 +2180,24 @@ if page == "Admin Dashboard":
     # ADMIN DASHBOARD HEADER
     # ========================================================
 
-    st.markdown(f"""<div class="quados-hero"><div class="quados-page-kicker">QuadOS 3.0 • Administration</div><div class="quados-hero-title">Admin Dashboard</div><div class="quados-hero-text">Welcome back, {user_name}. Monitor orders, payments, customers and support activity from one structured workspace.</div></div>""", unsafe_allow_html=True)
+    st.markdown(
+        f"""
+        <div style="
+            padding:24px 28px;
+            border-radius:18px;
+            background:linear-gradient(135deg, rgba(20,25,45,.96), rgba(42,42,58,.90));
+            border:1px solid rgba(255,255,255,.10);
+            margin-bottom:22px;
+        ">
+            <div style="font-size:13px;opacity:.65;">QuadOS 3.0 • Administration</div>
+            <div style="font-size:34px;font-weight:800;margin-top:5px;">Admin Dashboard</div>
+            <div style="font-size:15px;opacity:.72;margin-top:6px;">
+                Welcome back, {user_name}. Here's the current platform overview.
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
 
     # ========================================================
     # LOAD DATA ONCE
@@ -2431,7 +2474,7 @@ if page == "Admin Dashboard":
                 "OS": operating_system or "-",
                 "Amount": f"₹{float(final_price or 0):,.0f}",
                 "Status": status or "Placed",
-                "Date": str(order_date)
+                "Date": format_local_datetime(order_date)
             })
 
         st.dataframe(
@@ -2582,7 +2625,9 @@ if page == "Admin Dashboard":
 
 elif page == "All Users":
 
-    st.markdown("""<div class="quados-page-kicker">Administration</div><div class="quados-page-title">All Users</div><div class="quados-page-subtitle">Review registered customer accounts and use the available account-management actions when required.</div>""", unsafe_allow_html=True)
+    st.title("All Users")
+
+    st.write("View all registered QuadOS users in a table.")
 
     users = get_all_users()
 
@@ -2731,7 +2776,11 @@ elif page == "All Users":
 
 elif page == "Manage Orders":
 
-    st.markdown("""<div class="quados-page-kicker">Administration</div><div class="quados-page-title">Manage Orders</div><div class="quados-page-subtitle">Inspect customer configurations, reconcile payment status and update order progress from one workspace.</div>""", unsafe_allow_html=True)
+    st.title("Manage Orders")
+
+    st.caption(
+        "View, inspect and manage all customer orders from one place."
+    )
 
     orders = get_all_orders_with_users()
 
@@ -2766,7 +2815,7 @@ elif page == "Manage Orders":
                 "OS": operating_system or "-",
                 "Amount": f"₹{float(final_price or 0):,.2f}",
                 "Status": status,
-                "Order Date": str(order_date)
+                "Order Date": format_local_datetime(order_date)
             })
 
         st.dataframe(
@@ -2826,7 +2875,7 @@ elif page == "Manage Orders":
 
         with detail3:
             st.write(f"**Order Date**")
-            st.write(order_date)
+            st.write(format_local_datetime(order_date))
             st.write(f"**Status**")
             st.write(status)
 
@@ -2880,7 +2929,7 @@ elif page == "Manage Orders":
                 full_order = get_order_by_id(order_id)
                 if full_order and len(full_order) > 15:
                     payment_date_value = full_order[15] or "—"
-            st.metric("Payment Date", str(payment_date_value))
+            st.metric("Payment Date", format_local_datetime(payment_date_value))
         with pay_col3:
             if current_payment_status.lower() == "paid":
                 st.success("Payment confirmed")
@@ -3046,7 +3095,7 @@ elif page == "Manage Orders":
 
 elif page == "Analytics":
 
-    st.markdown("""<div class="quados-page-kicker">Administration</div><div class="quados-page-title">QuadOS Analytics</div><div class="quados-page-subtitle">Understand order activity, payment outcomes, device choices and business trends using recorded order history.</div>""", unsafe_allow_html=True)
+    st.title("QuadOS Analytics")
     st.caption("Complete order, payment, revenue and exception history.")
     st.divider()
 
@@ -3056,9 +3105,9 @@ elif page == "Analytics":
         st.info("No order data available for analytics yet.")
     else:
         data = data.copy()
-        data["order_date"] = pd.to_datetime(data["order_date"], errors="coerce")
-        data["payment_date"] = pd.to_datetime(data["payment_date"], errors="coerce")
-        data["cancelled_date"] = pd.to_datetime(data["cancelled_date"], errors="coerce")
+        data["order_date"] = pd.to_datetime(data["order_date"], errors="coerce", utc=True).dt.tz_convert("Asia/Kolkata")
+        data["payment_date"] = pd.to_datetime(data["payment_date"], errors="coerce", utc=True).dt.tz_convert("Asia/Kolkata")
+        data["cancelled_date"] = pd.to_datetime(data["cancelled_date"], errors="coerce", utc=True).dt.tz_convert("Asia/Kolkata")
         data["final_price"] = pd.to_numeric(data["final_price"], errors="coerce").fillna(0)
         data["device_type"] = data["device_type"].fillna("Unknown").astype(str)
         data["operating_system"] = data["operating_system"].fillna("Unknown").astype(str)
@@ -3283,7 +3332,25 @@ elif page == "Home":
     # ========================================================
     # WELCOME HERO
     # ========================================================
-    st.markdown(f"""<div class="quados-hero"><div class="quados-page-kicker">QuadOS 3.0 • Customer Workspace</div><div class="quados-hero-title">Welcome, {user_name}</div><div class="quados-hero-text">Choose a builder below, select the components you need, review the cart summary, and complete payment when your configuration is ready.</div></div>""", unsafe_allow_html=True)
+    st.markdown(
+        f"""
+        <div style="
+            padding:30px 34px;
+            border-radius:22px;
+            background:linear-gradient(135deg, rgba(25,31,55,.97), rgba(55,42,75,.92));
+            border:1px solid rgba(255,255,255,.12);
+            box-shadow:0 12px 35px rgba(0,0,0,.18);
+            margin-bottom:22px;
+        ">
+            <div style="font-size:13px;opacity:.65;letter-spacing:.08em;text-transform:uppercase;">QuadOS 3.0</div>
+            <div style="font-size:42px;font-weight:800;line-height:1.1;margin-top:7px;">Welcome, {user_name}</div>
+            <div style="font-size:17px;opacity:.78;margin-top:10px;max-width:760px;">
+                Configure a custom PC or smartphone, review your selections, and place your order from one simple workspace.
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
 
     # ========================================================
     # QUICK STATS
@@ -3433,9 +3500,9 @@ elif page == "PC Configurator":
 
     st.title("PC Configurator")
 
-    st.write("Build your custom PC by selecting each component.")
-    st.markdown("""<div class="quados-guide"><div class="quados-guide-step"><b>1 · Platform</b>Windows or macOS</div><div class="quados-guide-step"><b>2 · Profile</b>Start with a ready setup</div><div class="quados-guide-step"><b>3 · Components</b>Choose required parts</div><div class="quados-guide-step"><b>4 · Accessories</b>Add extras if needed</div><div class="quados-guide-step"><b>5 · Review & Pay</b>Check the cart and place order</div></div>""", unsafe_allow_html=True)
-    st.info("Choose a platform and profile first, complete the required components, add accessories if you want them, then review the Order Summary on the right. The Place Order button becomes available when the configuration is complete.")
+    st.write(
+        "Build your custom PC by selecting each component."
+    )
 
     # ========================================================
     # PC CONFIGURATOR LAYOUT
@@ -3992,8 +4059,7 @@ elif page == "PC Configurator":
 
         with st.container(border=True):
 
-            st.subheader("🛒 Order Summary")
-            st.caption("Selected items, discounts and the final payable amount appear here.")
+            st.subheader("🛒 Your Cart")
 
             if not st.session_state.cart:
 
@@ -4067,7 +4133,7 @@ elif page == "PC Configurator":
                     st.session_state.cart, "PC", cart_os
                 )
                 if pc_cart_valid:
-                    st.success("✓ Configuration complete — your order is ready for payment.")
+                    st.success("✓ Configuration is complete and eligible to place the order.")
                 else:
                     st.warning(pc_cart_message)
 
@@ -4123,9 +4189,7 @@ elif page == "PC Configurator":
 
                         cart_subtotal, cart_discount, cart_final, _, _ = get_discounted_cart_totals()
 
-                        order_date = datetime.now().strftime(
-                            "%Y-%m-%d %H:%M:%S"
-                        )
+                        order_date = utc_now_string()
 
                         # Snapshot cart items BEFORE creating the order or clearing the cart.
                         email_order_items = [dict(item) for item in st.session_state.cart]
@@ -4196,9 +4260,9 @@ elif page == "Mobile Configurator":
 
     st.title("Mobile Configurator")
 
-    st.write("Create your custom smartphone.")
-    st.markdown("""<div class="quados-guide"><div class="quados-guide-step"><b>1 · Platform</b>Choose iPhone or Android</div><div class="quados-guide-step"><b>2 · Profile</b>Start from a use case</div><div class="quados-guide-step"><b>3 · Components</b>Complete the device</div><div class="quados-guide-step"><b>4 · Accessories</b>Add useful extras</div><div class="quados-guide-step"><b>5 · Review & Pay</b>Check the cart and place order</div></div>""", unsafe_allow_html=True)
-    st.info("Choose iPhone or Android, select a profile or build manually, complete the required components, and review the Order Summary before placing the order.")
+    st.write(
+        "Create your custom smartphone."
+    )
 
     mobile_left, mobile_right = st.columns(
         [3, 1.25],
@@ -4619,8 +4683,7 @@ elif page == "Mobile Configurator":
 
         with st.container(border=True):
 
-            st.subheader("🛒 Order Summary")
-            st.caption("Selected items, discounts and the final payable amount appear here.")
+            st.subheader("🛒 Your Cart")
 
             if not st.session_state.cart:
 
@@ -4685,7 +4748,7 @@ elif page == "Mobile Configurator":
                     st.session_state.cart, "Mobile", mobile_cart_os
                 )
                 if mobile_cart_valid:
-                    st.success("✓ Configuration complete — your order is ready for payment.")
+                    st.success("✓ Configuration is complete and eligible to place the order.")
                 else:
                     st.warning(mobile_cart_message)
 
@@ -4738,9 +4801,7 @@ elif page == "Mobile Configurator":
 
                         mobile_cart_subtotal, mobile_cart_discount, mobile_cart_final, _, _ = get_discounted_cart_totals()
 
-                        order_date = datetime.now().strftime(
-                            "%Y-%m-%d %H:%M:%S"
-                        )
+                        order_date = utc_now_string()
 
                         # Snapshot cart items BEFORE creating the order or clearing the cart.
                         email_order_items = [dict(item) for item in st.session_state.cart]
@@ -4787,7 +4848,11 @@ elif page == "Mobile Configurator":
 
 elif page == "My Orders":
 
-    st.markdown("""<div class="quados-page-kicker">Customer workspace</div><div class="quados-page-title">My Orders</div><div class="quados-page-subtitle">Track your configurations, payment status and order progress. Unpaid orders can be cancelled; paid orders are protected from accidental cancellation.</div>""", unsafe_allow_html=True)
+    st.title("My Orders")
+
+    st.write(
+        "View your orders and cancel an order when needed."
+    )
 
     st.divider()
 
@@ -4825,7 +4890,7 @@ elif page == "My Orders":
                 ),
                 "Subtotal": f"₹{float(subtotal):,.2f}",
                 "Final Price": f"₹{float(final_price):,.2f}",
-                "Order Date": str(order_date),
+                "Order Date": format_local_datetime(order_date),
                 "Status": status
             })
 
@@ -4948,7 +5013,8 @@ elif page == "My Orders":
 
 elif page == "My Profile":
 
-    st.markdown("""<div class="quados-page-kicker">Account</div><div class="quados-page-title">My Profile</div><div class="quados-page-subtitle">Review your account details, order activity and support history in one place.</div>""", unsafe_allow_html=True)
+    st.title("My Profile")
+    st.caption("Manage and review your QuadOS account information.")
 
     # --------------------------------------------------------
     # PROFILE HEADER

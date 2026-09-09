@@ -2,7 +2,7 @@ import sqlite3
 import hashlib
 import hmac
 import secrets
-from datetime import datetime
+from datetime import datetime, timezone
 
 
 # ============================================================
@@ -908,7 +908,7 @@ def update_order_payment(
     if str(current_status or "Placed").lower() == "cancelled" and normalized == "Paid":
         return False
 
-    payment_timestamp = datetime.now().isoformat(timespec="seconds") if normalized == "Paid" else None
+    payment_timestamp = datetime.now(timezone.utc).isoformat(timespec="seconds") if normalized == "Paid" else None
 
     cursor.execute("""
         UPDATE orders
@@ -941,7 +941,7 @@ def mark_order_paid(order_id, razorpay_payment_id=None, razorpay_order_id=None):
     connection = get_connection()
     cursor = connection.cursor()
 
-    payment_timestamp = datetime.now().isoformat(timespec="seconds")
+    payment_timestamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
 
     cursor.execute("""
         UPDATE orders
@@ -1068,7 +1068,7 @@ def update_order_status(order_id, status):
         if current_status == "Completed" and status != "Completed":
             return False
 
-        cancelled_timestamp = datetime.now().isoformat(timespec="seconds") if status == "Cancelled" else None
+        cancelled_timestamp = datetime.now(timezone.utc).isoformat(timespec="seconds") if status == "Cancelled" else None
         cursor.execute("""
             UPDATE orders
             SET status = ?,
