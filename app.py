@@ -482,7 +482,8 @@ def handle_standard_razorpay_callback():
     st.query_params.clear()
 
     if ok:
-        st.success(message)
+        # complete_paid_order() stores the detailed success message in
+        # session state. Rerun once so the normal page can display it.
         st.rerun()
     else:
         st.error(message)
@@ -1995,6 +1996,12 @@ user_name = current_user[1]
 user_email = current_user[2]
 user_role = current_user[6]
 user_phone = current_user[4] if len(current_user) > 4 else ""
+
+# Display the payment success message after the verification rerun.
+# This must happen before the pending-payment view/navigation is rendered.
+_payment_success_message = st.session_state.pop("order_success_message", None)
+if _payment_success_message:
+    st.success(_payment_success_message)
 
 # Razorpay Standard Checkout responses return to the same Streamlit app.
 if user_role != "admin":

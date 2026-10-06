@@ -195,19 +195,26 @@ def build_checkout_html(
         params.set("razorpay_signature", response.razorpay_signature || "");
 
         const target = window.location.origin + window.location.pathname + "?" + params.toString();
-        message.textContent = "Payment received. Returning to QuadOS...";
 
-        // The checkout was opened from a real button click, so top navigation
-        // is permitted in browsers that restrict automatic iframe navigation.
-        try {{
-            window.top.location.assign(target);
-        }} catch (e) {{
+        // Show an explicit success state before returning to QuadOS. The
+        // backend verification/order placement still happens exactly as before.
+        button.textContent = "✓ Payment Successful";
+        button.disabled = true;
+        message.textContent = "Payment received. Confirming your QuadOS order...";
+
+        // Give the user a brief visible success state before the parent page
+        // navigates back to QuadOS for server-side verification.
+        setTimeout(function () {{
             try {{
-                window.parent.location.assign(target);
-            }} catch (e2) {{
-                message.textContent = "Payment received. Please return to the QuadOS tab to complete verification.";
+                window.top.location.assign(target);
+            }} catch (e) {{
+                try {{
+                    window.parent.location.assign(target);
+                }} catch (e2) {{
+                    message.textContent = "Payment received. Please return to the QuadOS tab to complete verification.";
+                }}
             }}
-        }}
+        }}, 1200);
     }}
 
     button.addEventListener("click", function () {{
