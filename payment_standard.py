@@ -43,8 +43,42 @@ def verify_payment_signature(key_id, key_secret, razorpay_order_id, razorpay_pay
 
 
 def fetch_payment(key_id, key_secret, payment_id):
+    """Fetch a Razorpay payment including its current refund state."""
     return get_client(key_id, key_secret).payment.fetch(str(payment_id))
 
+
+def get_razorpay_refund_state(key_id, key_secret, payment_id):
+    """Return normalized refund information for a Razorpay payment.
+
+    Razorpay exposes refund_status as null/partial/full and amount_refunded
+    in the smallest currency unit.
+    """
+    payment = fetch_payment(key_id, key_secret, payment_id)
+    if not isinstance(payment, dict):
+        return {"refund_status": None, "amount_refunded": 0.0, "payment_status": None}
+
+    status = str(payment.get("status", "")).strip().lower()
+    refund_status = str(payment.get("refund_status") or "").strip().lower() or None
+    if status == "refunded":
+        refund_status = "full"
+
+    amount_refunded = round(float(payment.get("amount_refunded", 0) or 0) / 100.0, 2)
+    return {
+        "refund_status": refund_status,
+        "amount_refunded": amount_refunded,
+        "payment_status": status or None,
+    }
+
+
+def create_razorpay_refund(key_id, key_secret, razorpay_payment_id, amount_rupees, notes=None):
+    """Create a full or partial Razorpay refund for a captured payment."""
+    amount_rupees = round(float(amount_rupees), 2)
+    if amount_rupees <= 0:
+        raise ValueError("Refund amount must be greater than zero.")
+    payload = {"amount": int(round(amount_rupees * 100))}
+    if notes:
+        payload["notes"] = {str(k): str(v)[:256] for k, v in dict(notes).items()}
+    return get_client(key_id, key_secret).payment.refund(str(razorpay_payment_id), payload)
 
 def fetch_order_payments(key_id, key_secret, razorpay_order_id):
     """Fetch all Razorpay payments linked to a specific order."""
@@ -194,7 +228,10 @@ def build_checkout_html(
         params.set("razorpay_order_id", response.razorpay_order_id || "");
         params.set("razorpay_signature", response.razorpay_signature || "");
 
-        const target = window.location.origin + window.location.pathname + "?" + params.toString();
+        const parentUrl = document.referrer ? new URL(document.referrer) : new URL(window.location.origin + "/");
+        parentUrl.search = params.toString();
+        parentUrl.hash = "";
+        const target = parentUrl.toString();
 
         // Show an explicit success state before returning to QuadOS. The
         // backend verification/order placement still happens exactly as before.

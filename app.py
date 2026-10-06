@@ -31,6 +31,9 @@ from database import (
     get_user_order_count,
     create_order,
     cancel_order,
+    request_order_cancellation,
+    reject_cancellation,
+    approve_unpaid_cancellation,
     get_user_orders,
     get_all_orders_with_users,
     update_order_status,
@@ -42,7 +45,12 @@ from database import (
     mark_order_paid,
     get_order_payment,
     get_order_by_id,
-    get_order_by_razorpay_order_id
+    get_order_by_razorpay_order_id,
+    start_order_refund,
+    complete_order_refund,
+    fail_order_refund,
+    get_pending_refund_orders,
+    sync_order_refund_status
 )
 
 from config import (
@@ -103,6 +111,7 @@ from payment_standard import (
     get_captured_payment_for_order,
     is_payment_captured,
     build_checkout_html,
+    create_razorpay_refund,
 )
 from email_service import (
     send_order_confirmation_email,
@@ -169,6 +178,211 @@ ORDER_STATUS_OPTIONS = [
     "Completed",
     "Cancelled",
 ]
+
+
+def _reconcile_pending_refunds(user_id=None):
+    """Reconcile QuadOS Pending refunds with the current Razorpay payment state.
+
+    This is intentionally server-side and uses the same Razorpay credentials
+    as the refund creation call. It prevents QuadOS from staying Pending after
+    Razorpay has already completed the refund.
+    """
+    key_id, key_secret = get_razorpay_credentials()
+    if not key_id or not key_secret:
+        return 0
+
+    pending_orders = get_pending_refund_orders(user_id)
+    reconciled = 0
+
+    for order_id, owner_id, payment_id, requested_amount, local_status, refund_id in pending_orders:
+        payment_id = str(payment_id or '').strip()
+        if not payment_id:
+            continue
+
+        try:
+            payment = fetch_payment(key_id, key_secret, payment_id)
+            if not isinstance(payment, dict):
+                continue
+
+            razorpay_refund_status = str(payment.get('refund_status') or '').strip().lower()
+            amount_refunded = round(float(payment.get('amount_refunded', 0) or 0) / 100.0, 2)
+
+            # Razorpay payment.status becomes 'refunded' for a fully refunded
+            # payment. refund_status='full' is the explicit refund indicator.
+            if str(payment.get('status', '')).strip().lower() == 'refunded':
+                razorpay_refund_status = 'full'
+
+            if sync_order_refund_status(
+                owner_id, order_id, razorpay_refund_status, amount_refunded
+            ):
+                reconciled += 1
+        except Exception:
+            # A temporary API/network problem must not corrupt the local
+            # refund state. The order remains Pending and can be checked again.
+            continue
+
+    return reconciled
+
+
+def _execute_order_cancellation_refund(order_id, target_user_id, refund_amount, refund_type, reason,
+                                        customer_email, customer_name, device_type, final_price):
+    """Admin-only approval path: cancel the order and, for paid orders, issue the chosen refund."""
+    order = get_order_by_id(order_id)
+    if not order or order[1] != target_user_id:
+        return False, "Order not found or it does not belong to the selected customer."
+
+    if str(order[25] if len(order) > 25 else "None").lower() != "requested":
+        return False, "This order does not have a pending customer cancellation request."
+
+    payment_status = str(order[11] or "Pending").lower()
+    if payment_status != "paid":
+        if not approve_unpaid_cancellation(order_id):
+            return False, "The unpaid cancellation could not be approved."
+        refund_amount = 0.0
+        refund_status = "Not Applicable"
+        cancellation_charge = 0.0
+        refund_type = "None"
+    else:
+        payment_id = str(order[14] or "").strip()
+        if not payment_id:
+            return False, "This paid order has no Razorpay payment ID, so a refund cannot be created."
+        paid_amount = round(float(order[8] or 0), 2)
+        refund_amount = round(float(refund_amount), 2)
+        if refund_amount <= 0 or refund_amount > paid_amount:
+            return False, "Refund amount must be greater than ₹0 and cannot exceed the paid amount."
+        cancellation_charge = round(paid_amount - refund_amount, 2)
+
+        ok, message = start_order_refund(
+            target_user_id, order_id, refund_amount, refund_type, reason, cancellation_charge
+        )
+        if not ok:
+            return False, message
+
+        key_id, key_secret = get_razorpay_credentials()
+        if not key_id or not key_secret:
+            fail_order_refund(target_user_id, order_id)
+            return False, "Razorpay credentials are not configured."
+
+        try:
+            refund = create_razorpay_refund(
+                key_id, key_secret, payment_id, refund_amount,
+                notes={"quados_order_id": order_id, "refund_type": refund_type, "reason": reason},
+            )
+        except Exception as exc:
+            fail_order_refund(target_user_id, order_id)
+            return False, f"Razorpay refund failed: {exc}"
+
+        razorpay_refund_id = str(refund.get("id", "")).strip() if isinstance(refund, dict) else ""
+        razorpay_refund_status = str(refund.get("status", "pending") if isinstance(refund, dict) else "pending").lower()
+        refund_status = "Processed" if razorpay_refund_status in {"processed", "completed"} else "Pending"
+        if not complete_order_refund(target_user_id, order_id, refund_amount, refund_status, razorpay_refund_id):
+            return False, "Refund was created, but QuadOS could not save the refund result. Please reconcile this order."
+
+    updated = get_order_by_id(order_id)
+    saved_refund_status = updated[17] if updated and len(updated) > 17 else refund_status
+    saved_refund_amount = updated[18] if updated and len(updated) > 18 else refund_amount
+    saved_charge = updated[23] if updated and len(updated) > 23 else cancellation_charge
+    saved_reason = updated[22] if updated and len(updated) > 22 else reason
+    email_ok, email_message = send_order_cancellation_emails(
+        recipient_email=customer_email, customer_name=customer_name, order_id=order_id,
+        device_type=device_type, final_price=final_price, refund_amount=saved_refund_amount,
+        refund_status=saved_refund_status, cancellation_charge=saved_charge,
+        refund_type=refund_type, cancellation_reason=saved_reason,
+    )
+    if str(saved_refund_status).lower() == "pending":
+        return True, f"Order #{order_id} cancelled and refund of ₹{float(saved_refund_amount):,.2f} is pending. {email_message}"
+    if str(saved_refund_status).lower() == "processed":
+        return True, f"Order #{order_id} cancelled and refund of ₹{float(saved_refund_amount):,.2f} processed. {email_message}"
+    return True, f"Order #{order_id} cancelled successfully. {email_message}"
+
+
+@st.dialog("Request Order Cancellation")
+def request_cancellation_dialog(order_id, target_user_id):
+    order = get_order_by_id(order_id)
+    if not order or order[1] != target_user_id:
+        st.error("Order could not be loaded.")
+        return
+    if str(order[10] or "Placed").lower() == "cancelled":
+        st.info("This order is already cancelled.")
+        return
+    if str(order[25] if len(order) > 25 else "None").lower() == "requested":
+        st.info("Cancellation has already been requested. An administrator will review it.")
+        return
+
+    st.subheader(f"Request cancellation for Order #{order_id}")
+    st.write(f"**Order value:** ₹{float(order[8] or 0):,.2f}")
+    st.write(f"**Payment:** {order[11] or 'Pending'}")
+    reason_options = ["Customer changed their mind", "Incorrect configuration", "Order no longer required", "Duplicate order", "Other"]
+    reason_choice = st.selectbox("Cancellation reason", reason_options, key=f"request_cancel_reason_{order_id}")
+    custom_reason = st.text_input("Enter reason", key=f"request_cancel_reason_other_{order_id}") if reason_choice == "Other" else ""
+    reason = custom_reason.strip() if reason_choice == "Other" else reason_choice
+    st.warning("This only submits a cancellation request. The administrator will decide whether to approve it and, for paid orders, the refund amount or cancellation charge.")
+    c1, c2 = st.columns(2)
+    with c1:
+        if st.button("Submit Cancellation Request", type="primary", use_container_width=True, key=f"submit_cancel_request_{order_id}"):
+            ok, message = request_order_cancellation(target_user_id, order_id, reason)
+            if ok:
+                st.session_state["flash_success_message"] = message
+                st.rerun()
+            else:
+                st.error(message)
+    with c2:
+        if st.button("Keep Order", use_container_width=True, key=f"close_cancel_request_{order_id}"):
+            st.rerun()
+
+
+@st.dialog("Approve Cancellation & Refund")
+def admin_cancellation_refund_dialog(order_id, target_user_id, customer_email, customer_name, device_type, final_price):
+    order = get_order_by_id(order_id)
+    if not order or order[1] != target_user_id:
+        st.error("Order could not be loaded.")
+        return
+    if str(order[25] if len(order) > 25 else "None").lower() != "requested":
+        st.info("There is no pending cancellation request for this order.")
+        return
+
+    paid = str(order[11] or "Pending").lower() == "paid"
+    reason = str(order[22] or "Customer requested cancellation")
+    st.subheader(f"Order #{order_id}")
+    st.write(f"**Customer:** {customer_name}")
+    st.write(f"**Order value:** ₹{float(final_price):,.2f}")
+    st.write(f"**Cancellation reason:** {reason}")
+
+    if paid:
+        full_amount = round(float(final_price), 2)
+        refund_mode = st.radio("Admin refund decision", ["Full Refund", "Refund After Cancellation Charge"], horizontal=True, key=f"admin_refund_mode_{order_id}")
+        if refund_mode == "Full Refund":
+            refund_amount = full_amount
+            refund_type = "Full Refund"
+            cancellation_charge = 0.0
+        else:
+            cancellation_charge = st.number_input("Cancellation charge (₹)", min_value=0.0, max_value=full_amount - 0.01, value=0.0, step=100.0, key=f"admin_cancel_charge_{order_id}")
+            refund_amount = round(full_amount - float(cancellation_charge), 2)
+            refund_type = "Refund After Cancellation Charge"
+        st.info(f"Customer refund: ₹{refund_amount:,.2f}  •  Cancellation charge: ₹{cancellation_charge:,.2f}")
+    else:
+        refund_amount = 0.0
+        refund_type = "None"
+        cancellation_charge = 0.0
+        st.info("This is an unpaid order. Approving will cancel the order with no refund.")
+
+    c1, c2 = st.columns(2)
+    with c1:
+        label = "Approve & Process Refund" if paid else "Approve Cancellation"
+        if st.button(label, type="primary", use_container_width=True, key=f"admin_approve_cancel_{order_id}"):
+            ok, message = _execute_order_cancellation_refund(order_id, target_user_id, refund_amount, refund_type, reason, customer_email, customer_name, device_type, final_price)
+            if ok:
+                st.session_state["flash_success_message"] = message
+                st.rerun()
+            else:
+                st.error(message)
+    with c2:
+        if st.button("Reject Request", use_container_width=True, key=f"admin_reject_cancel_{order_id}"):
+            if reject_cancellation(order_id):
+                st.session_state["flash_success_message"] = f"Cancellation request for Order #{order_id} rejected."
+                st.rerun()
+            else:
+                st.error("Could not reject the cancellation request.")
 
 
 @st.dialog("Confirm Delete User")
@@ -372,12 +586,14 @@ def complete_paid_order(order_id, payment_id, razorpay_order_id):
         return False, "Could not update the order payment status."
 
     updated_order = get_order_by_id(order_id)
-    (
-        _order_id, _user_id, device_type, operating_system, configuration,
-        accessories, subtotal, discount, final_price, order_date, _status,
-        _payment_status, _razorpay_order_id, _payment_link_id, _payment_id,
-        _payment_date, _cancelled_date
-    ) = updated_order
+    device_type = updated_order[2]
+    operating_system = updated_order[3]
+    configuration = updated_order[4]
+    accessories = updated_order[5]
+    subtotal = updated_order[6]
+    discount = updated_order[7]
+    final_price = updated_order[8]
+    order_date = updated_order[9]
 
     customer_name = user_name
     email_items = st.session_state.get("pending_payment", {}).get("order_items", [])
@@ -482,8 +698,7 @@ def handle_standard_razorpay_callback():
     st.query_params.clear()
 
     if ok:
-        # complete_paid_order() stores the detailed success message in
-        # session state. Rerun once so the normal page can display it.
+        st.success(message)
         st.rerun()
     else:
         st.error(message)
@@ -1997,12 +2212,6 @@ user_email = current_user[2]
 user_role = current_user[6]
 user_phone = current_user[4] if len(current_user) > 4 else ""
 
-# Display the payment success message after the verification rerun.
-# This must happen before the pending-payment view/navigation is rendered.
-_payment_success_message = st.session_state.pop("order_success_message", None)
-if _payment_success_message:
-    st.success(_payment_success_message)
-
 # Razorpay Standard Checkout responses return to the same Streamlit app.
 if user_role != "admin":
     handle_standard_razorpay_callback()
@@ -2783,6 +2992,11 @@ elif page == "All Users":
 
 elif page == "Manage Orders":
 
+    # Reconcile any previously Pending refunds with Razorpay before showing
+    # the admin table. This fixes stale local statuses such as Pending when
+    # Razorpay already reports the payment as Refunded.
+    _reconcile_pending_refunds()
+
     st.title("Manage Orders")
 
     st.caption(
@@ -2822,6 +3036,9 @@ elif page == "Manage Orders":
                 "OS": operating_system or "-",
                 "Amount": f"₹{float(final_price or 0):,.2f}",
                 "Status": status,
+                "Payment": order[11] if len(order) > 11 else "Pending",
+                "Refund": order[12] if len(order) > 12 else "Not Applicable",
+                "Refund Amount": f"₹{float(order[13] or 0):,.2f}" if len(order) > 13 else "₹0.00",
                 "Order Date": format_local_datetime(order_date)
             })
 
@@ -2967,6 +3184,35 @@ elif page == "Manage Orders":
             st.info("Cancelled orders cannot be marked as paid.")
 
         # ----------------------------------------------------
+        # CANCELLATION REQUEST / REFUND MANAGEMENT
+        # ----------------------------------------------------
+        full_admin_order = get_order_by_id(order_id)
+        if full_admin_order:
+            cancellation_status = str(full_admin_order[25] or "None") if len(full_admin_order) > 25 else "None"
+            refund_status = str(full_admin_order[17] or "Not Applicable") if len(full_admin_order) > 17 else "Not Applicable"
+            refund_amount = float(full_admin_order[18] or 0) if len(full_admin_order) > 18 else 0.0
+            cancellation_charge = float(full_admin_order[23] or 0) if len(full_admin_order) > 23 else 0.0
+            st.divider()
+            st.subheader("Cancellation & Refund")
+            req_col1, req_col2, req_col3 = st.columns(3)
+            with req_col1:
+                st.metric("Cancellation Request", cancellation_status)
+            with req_col2:
+                st.metric("Refund Status", refund_status)
+            with req_col3:
+                st.metric("Refund Amount", f"₹{refund_amount:,.2f}")
+
+            if cancellation_status.lower() == "requested" and status.lower() != "cancelled":
+                st.warning("The customer has requested cancellation. Only the administrator can approve/reject it and decide the refund.")
+                if st.button("Review Cancellation Request", type="primary", key=f"admin_review_cancel_{order_id}", use_container_width=True):
+                    admin_cancellation_refund_dialog(
+                        order_id, full_admin_order[1], customer_email, customer_name,
+                        device_type, final_price
+                    )
+            elif status.lower() == "cancelled":
+                st.write(f"Cancellation charge: **₹{cancellation_charge:,.2f}**")
+
+        # ----------------------------------------------------
         # UPDATE ORDER STATUS
         # ----------------------------------------------------
 
@@ -2974,11 +3220,15 @@ elif page == "Manage Orders":
         st.subheader("Update Order Status")
 
         current_status = status if status in ORDER_STATUS_OPTIONS else "Placed"
+        # Cancellation is handled only through the cancellation-request approval workflow.
+        admin_status_options = [item for item in ORDER_STATUS_OPTIONS if item != "Cancelled"]
+        if current_status == "Cancelled":
+            admin_status_options = ["Cancelled"] + admin_status_options
 
         new_status = st.selectbox(
             "Order Status",
-            ORDER_STATUS_OPTIONS,
-            index=ORDER_STATUS_OPTIONS.index(current_status),
+            admin_status_options,
+            index=admin_status_options.index(current_status),
             key=f"admin_order_status_{order_id}",
         )
 
@@ -4855,162 +5105,55 @@ elif page == "Mobile Configurator":
 
 elif page == "My Orders":
 
+    # Keep the customer's refund status synchronized with Razorpay.
+    _reconcile_pending_refunds(user_id)
+
     st.title("My Orders")
-
-    st.write(
-        "View your orders and cancel an order when needed."
-    )
-
+    st.write("View your orders, payment status, cancellations and refunds.")
     st.divider()
 
     orders = get_user_orders(user_id)
 
     if orders:
-
         order_rows = []
-
         for order in orders:
-
-            order_id = order[0]
-            device_type = order[2]
-            operating_system = order[3]
-            configuration = order[4]
-            accessories = order[5]
-            subtotal = order[6]
-            final_price = order[8]
-            order_date = order[9]
-            status = order[10] or "Placed"
-
             order_rows.append({
-                "Order ID": order_id,
-                "Device": device_type,
-                "Operating System": operating_system,
-                "Configuration": (
-                    configuration
-                    if configuration
-                    else "No configuration details"
-                ),
-                "Accessories": (
-                    accessories
-                    if accessories
-                    else "No accessories"
-                ),
-                "Subtotal": f"₹{float(subtotal):,.2f}",
-                "Final Price": f"₹{float(final_price):,.2f}",
-                "Order Date": format_local_datetime(order_date),
-                "Status": status
+                "Order ID": order[0],
+                "Device": order[2],
+                "Operating System": order[3],
+                "Configuration": order[4] or "No configuration details",
+                "Accessories": order[5] or "No accessories",
+                "Final Price": f"₹{float(order[8] or 0):,.2f}",
+                "Order Date": format_local_datetime(order[9]),
+                "Status": order[10] or "Placed",
+                "Payment": order[11] or "Pending",
+                "Refund": order[14] or "Not Applicable",
+                "Refund Amount": f"₹{float(order[15] or 0):,.2f}",
             })
 
-        orders_df = pd.DataFrame(order_rows)
-
-        st.dataframe(
-            orders_df,
-            use_container_width=True,
-            hide_index=True,
-            height=500
-        )
-
-        st.caption(
-            f"Total orders displayed: {len(orders_df)}"
-        )
-
-        # ====================================================
-        # CANCEL ORDER
-        # ====================================================
+        st.dataframe(pd.DataFrame(order_rows), use_container_width=True, hide_index=True, height=500)
+        st.caption(f"Total orders displayed: {len(orders)}")
 
         st.divider()
         st.subheader("Cancel an Order")
+        active_orders = [order for order in orders if (order[10] or "Placed").lower() != "cancelled"]
 
-        cancellable_orders = [
-            order
-            for order in orders
-            if (order[10] or "Placed") != "Cancelled"
-        ]
-
-        if cancellable_orders:
-
+        if active_orders:
             cancel_options = {
-                f"Order #{order[0]} | {order[2]} | {order[3]} | ₹{float(order[8]):,.2f}": order[0]
-                for order in cancellable_orders
+                f"Order #{order[0]} | {order[2]} | ₹{float(order[8] or 0):,.2f} | {order[11] or 'Pending'}": order
+                for order in active_orders
             }
+            selected_label = st.selectbox("Select an order", list(cancel_options.keys()), key="user_cancel_order_select")
+            selected_order = cancel_options[selected_label]
 
-            selected_cancel_label = st.selectbox(
-                "Select an order to cancel",
-                list(cancel_options.keys()),
-                key="user_cancel_order_select"
-            )
-
-            selected_cancel_order_id = cancel_options[
-                selected_cancel_label
-            ]
-
-            if st.button(
-                "Cancel Order",
-                key="user_cancel_order_button",
-                type="primary",
-                use_container_width=True
-            ):
-
-                cancelled = cancel_order(
-                    user_id,
-                    selected_cancel_order_id
-                )
-
-                if cancelled:
-
-                    # The cancellation is saved first. Email failure must
-                    # not roll back the customer's cancellation.
-                    selected_cancel_order = next(
-                        (
-                            item
-                            for item in cancellable_orders
-                            if item[0] == selected_cancel_order_id
-                        ),
-                        None,
-                    )
-
-                    if selected_cancel_order:
-                        cancel_email_ok, cancel_email_message = (
-                            send_order_cancellation_emails(
-                                recipient_email=user_email,
-                                customer_name=user_name,
-                                order_id=selected_cancel_order[0],
-                                device_type=selected_cancel_order[2],
-                                final_price=selected_cancel_order[8],
-                            )
-                        )
-
-                        if cancel_email_ok:
-                            st.session_state["order_status_email_message"] = (
-                                f"Cancellation email sent for Order #{selected_cancel_order_id}."
-                            )
-                        else:
-                            st.session_state["order_status_email_message"] = (
-                                "Order was cancelled, but the cancellation email could "
-                                f"not be sent: {cancel_email_message}"
-                            )
-
-                    st.session_state["flash_success_message"] = (
-                        f"Order #{selected_cancel_order_id} has been cancelled successfully."
-                    )
-
-                    st.rerun()
-
-                else:
-
-                    st.error(
-                        "The order could not be cancelled. It may already be cancelled or does not belong to your account."
-                    )
-
+            if str(selected_order[22] if len(selected_order) > 22 else "None").lower() == "requested":
+                st.info("Cancellation requested. Waiting for admin approval.")
+            elif st.button("Request Cancellation", key="user_cancel_order_button", type="primary", use_container_width=True):
+                request_cancellation_dialog(selected_order[0], user_id)
         else:
-
             st.info("All your orders have already been cancelled.")
-
     else:
-
-        st.info(
-            "You have not placed any orders yet."
-        )
+        st.info("You have not placed any orders yet.")
 
 
 

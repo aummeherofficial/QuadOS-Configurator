@@ -424,10 +424,19 @@ def send_order_status_email(recipient_email, customer_name, order_id, status):
     return _smtp_send(msg)
 
 
-def send_order_cancellation_emails(recipient_email, customer_name, order_id, device_type, final_price):
-    """Notify both customer and admin using the same professional design."""
+def send_order_cancellation_emails(
+    recipient_email, customer_name, order_id, device_type, final_price,
+    refund_amount=0, refund_status="Not Applicable", cancellation_charge=0,
+    refund_type="None", cancellation_reason="",
+):
+    """Notify customer/admin about cancellation and any refund."""
+    if str(refund_status).lower() not in {"not applicable", "none", ""}:
+        user_status = f"Cancelled — Refund {_money(refund_amount)} {refund_status}"
+    else:
+        user_status = "Cancelled"
+
     user_ok, user_message = send_order_status_email(
-        recipient_email, customer_name, order_id, "Cancelled"
+        recipient_email, customer_name, order_id, user_status
     )
 
     admin = _admin_email()
@@ -435,24 +444,39 @@ def send_order_cancellation_emails(recipient_email, customer_name, order_id, dev
     admin_message = ""
 
     if admin and "@" in admin:
-        body = f'''
+        refund_rows = ""
+        if str(refund_status).lower() not in {"not applicable", "none", ""}:
+            refund_rows = (
+                f"<tr><td style='padding:12px;background:#f9fafb;color:#6b7280;'>Refund Type</td>"
+                f"<td style='padding:12px;font-weight:700;'>{escape(str(refund_type))}</td></tr>"
+                f"<tr><td style='padding:12px;background:#f9fafb;color:#6b7280;'>Refund Amount</td>"
+                f"<td style='padding:12px;font-weight:700;'>{_money(refund_amount)}</td></tr>"
+                f"<tr><td style='padding:12px;background:#f9fafb;color:#6b7280;'>Cancellation Charge</td>"
+                f"<td style='padding:12px;font-weight:700;'>{_money(cancellation_charge)}</td></tr>"
+                f"<tr><td style='padding:12px;background:#f9fafb;color:#6b7280;'>Refund Status</td>"
+                f"<td style='padding:12px;font-weight:800;'>{escape(str(refund_status))}</td></tr>"
+            )
+        body = f"""
 <table width="100%" cellspacing="0" cellpadding="0" style="border:1px solid #e5e7eb;border-radius:10px;overflow:hidden;margin-bottom:20px;">
 <tr><td style="padding:12px;background:#f9fafb;color:#6b7280;width:34%;">Order ID</td><td style="padding:12px;font-weight:800;">#{escape(str(order_id))}</td></tr>
 <tr><td style="padding:12px;background:#f9fafb;color:#6b7280;">Customer</td><td style="padding:12px;font-weight:600;">{escape(customer_name or "")}</td></tr>
 <tr><td style="padding:12px;background:#f9fafb;color:#6b7280;">Email</td><td style="padding:12px;font-weight:600;">{escape(recipient_email or "")}</td></tr>
 <tr><td style="padding:12px;background:#f9fafb;color:#6b7280;">Device</td><td style="padding:12px;font-weight:700;">{escape(device_type or "Not specified")}</td></tr>
 <tr><td style="padding:12px;background:#f9fafb;color:#6b7280;">Order Value</td><td style="padding:12px;font-weight:700;">{_money(final_price)}</td></tr>
+{refund_rows}
 <tr><td style="padding:12px;background:#fef2f2;color:#b91c1c;">Status</td><td style="padding:12px;background:#fef2f2;color:#b91c1c;font-weight:800;">Cancelled</td></tr>
 </table>
-<div style="background:#fff7ed;border:1px solid #fed7aa;border-radius:10px;padding:15px;color:#9a3412;font-size:13px;line-height:1.6;">Action: review the cancellation in Admin → Manage Orders.</div>'''
+<div style="background:#fff7ed;border:1px solid #fed7aa;border-radius:10px;padding:15px;color:#9a3412;font-size:13px;line-height:1.6;">Reason: {escape(cancellation_reason or "Customer requested cancellation")}<br>Review the cancellation in Admin → Manage Orders.</div>"""
 
         msg = EmailMessage()
-        msg["Subject"] = f"🔴 QuadOS Order Cancelled — #{order_id}"
+        msg["Subject"] = f"QuadOS Order Cancelled — #{order_id}"
         msg["To"] = admin
         msg.set_content(
             f"Order #{order_id} cancelled.\nCustomer: {customer_name}\n"
             f"Email: {recipient_email}\nDevice: {device_type}\n"
-            f"Order Value: {_money(final_price)}"
+            f"Order Value: {_money(final_price)}\n"
+            f"Refund: {_money(refund_amount)} ({refund_status})\n"
+            f"Cancellation Charge: {_money(cancellation_charge)}"
         )
         msg.add_alternative(
             _notification_html(
@@ -466,12 +490,14 @@ def send_order_cancellation_emails(recipient_email, customer_name, order_id, dev
         admin_ok, admin_message = _smtp_send(msg)
 
     if user_ok and admin_ok:
-        return True, "Cancellation notifications sent to customer and admin."
+        return True, "Cancellation/refund notifications sent to customer and admin."
     if user_ok:
         return True, f"Customer notified, but the admin email failed: {admin_message}"
     if admin_ok:
         return False, f"Admin notified, but the customer email failed: {user_message}"
-    return False, f"Cancellation emails could not be sent: {user_message}"
+    return False, f"Cancellation/refund emails could not be sent: {user_message}"
+
+
 
 
 def send_password_reset_email(recipient_email, customer_name):

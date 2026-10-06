@@ -14,7 +14,8 @@ def get_order_data():
     query = """
         SELECT
             id, device_type, operating_system, subtotal, final_price,
-            order_date, status, payment_status, payment_date, cancelled_date
+            order_date, status, payment_status, payment_date, cancelled_date,
+            refund_status, refund_amount, refund_date, cancellation_charge
         FROM orders
         ORDER BY order_date
     """

@@ -95,6 +95,24 @@ def create_tables():
 
             cancelled_date TEXT,
 
+            refund_status TEXT DEFAULT 'Not Applicable',
+
+            refund_amount REAL DEFAULT 0,
+
+            refund_date TEXT,
+
+            razorpay_refund_id TEXT,
+
+            refund_type TEXT,
+
+            cancellation_reason TEXT,
+
+            cancellation_charge REAL DEFAULT 0,
+
+            cancellation_requested_date TEXT,
+
+            cancellation_status TEXT DEFAULT 'None',
+
             FOREIGN KEY (user_id)
             REFERENCES users(id)
         )
@@ -161,6 +179,33 @@ def create_tables():
 
     if "cancelled_date" not in order_columns:
         cursor.execute("ALTER TABLE orders ADD COLUMN cancelled_date TEXT")
+
+    if "refund_status" not in order_columns:
+        cursor.execute("ALTER TABLE orders ADD COLUMN refund_status TEXT DEFAULT 'Not Applicable'")
+
+    if "refund_amount" not in order_columns:
+        cursor.execute("ALTER TABLE orders ADD COLUMN refund_amount REAL DEFAULT 0")
+
+    if "refund_date" not in order_columns:
+        cursor.execute("ALTER TABLE orders ADD COLUMN refund_date TEXT")
+
+    if "razorpay_refund_id" not in order_columns:
+        cursor.execute("ALTER TABLE orders ADD COLUMN razorpay_refund_id TEXT")
+
+    if "refund_type" not in order_columns:
+        cursor.execute("ALTER TABLE orders ADD COLUMN refund_type TEXT")
+
+    if "cancellation_reason" not in order_columns:
+        cursor.execute("ALTER TABLE orders ADD COLUMN cancellation_reason TEXT")
+
+    if "cancellation_charge" not in order_columns:
+        cursor.execute("ALTER TABLE orders ADD COLUMN cancellation_charge REAL DEFAULT 0")
+
+    if "cancellation_requested_date" not in order_columns:
+        cursor.execute("ALTER TABLE orders ADD COLUMN cancellation_requested_date TEXT")
+
+    if "cancellation_status" not in order_columns:
+        cursor.execute("ALTER TABLE orders ADD COLUMN cancellation_status TEXT DEFAULT 'None'")
 
     # Preserve the best available historical date for existing records.
     # Future payments/cancellations receive their real event timestamp.
@@ -488,7 +533,19 @@ def get_user_orders(user_id):
             discount,
             final_price,
             order_date,
-            status
+            status,
+            payment_status,
+            payment_date,
+            cancelled_date,
+            refund_status,
+            refund_amount,
+            refund_date,
+            razorpay_refund_id,
+            refund_type,
+            cancellation_reason,
+            cancellation_charge,
+            cancellation_requested_date,
+            cancellation_status
         FROM orders
         WHERE user_id = ?
         ORDER BY id DESC
@@ -977,7 +1034,10 @@ def get_order_by_id(order_id):
         SELECT id, user_id, device_type, operating_system, configuration,
                accessories, subtotal, discount, final_price, order_date, status,
                payment_status, razorpay_order_id, razorpay_payment_link_id,
-               razorpay_payment_id, payment_date, cancelled_date
+               razorpay_payment_id, payment_date, cancelled_date,
+               refund_status, refund_amount, refund_date, razorpay_refund_id,
+               refund_type, cancellation_reason, cancellation_charge,
+               cancellation_requested_date, cancellation_status
         FROM orders
         WHERE id = ?
     """, (order_id,))
@@ -1088,25 +1148,274 @@ def update_order_status(order_id, status):
         connection.close()
 
 
-def cancel_order(user_id, order_id):
-    """Cancel an unpaid order belonging to the signed-in user.
+def request_order_cancellation(user_id, order_id, cancellation_reason="Customer requested cancellation"):
+    """Create a customer cancellation request. The customer never approves or chooses a refund."""
+    connection = get_connection()
+    cursor = connection.cursor()
+    try:
+        timestamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        cursor.execute("""
+            SELECT status, payment_status, cancellation_status
+            FROM orders WHERE id = ? AND user_id = ?
+        """, (order_id, user_id))
+        row = cursor.fetchone()
+        if not row:
+            return False, "Order not found or it does not belong to your account."
+        status, payment_status, cancellation_status = row
+        if str(status or "Placed").lower() == "cancelled":
+            return False, "This order is already cancelled."
+        if str(cancellation_status or "None").lower() == "requested":
+            return False, "Cancellation has already been requested for this order."
+        if str(status or "Placed").lower() == "completed":
+            return False, "Completed orders cannot be cancelled."
 
-    Paid orders require a refund workflow, which QuadOS does not currently implement.
-    """
+        cursor.execute("""
+            UPDATE orders
+            SET cancellation_status = 'Requested',
+                cancellation_reason = ?,
+                cancellation_requested_date = ?,
+                refund_status = CASE WHEN LOWER(COALESCE(payment_status, 'Pending')) = 'paid' THEN 'Awaiting Admin Approval' ELSE 'Not Applicable' END
+            WHERE id = ? AND user_id = ?
+        """, (cancellation_reason, timestamp, order_id, user_id))
+        changed = cursor.rowcount > 0
+        connection.commit()
+        return changed, ("Cancellation request submitted. An administrator will review it and decide the refund amount." if changed else "Could not submit the cancellation request.")
+    except sqlite3.Error:
+        connection.rollback()
+        return False, "Could not submit the cancellation request."
+    finally:
+        connection.close()
+
+
+def cancel_order(user_id, order_id, cancellation_reason="Customer requested cancellation"):
+    """Backward-compatible alias: customers now submit a cancellation request."""
+    ok, _ = request_order_cancellation(user_id, order_id, cancellation_reason)
+    return ok
+
+
+def reject_cancellation(order_id):
     connection = get_connection()
     cursor = connection.cursor()
     try:
         cursor.execute("""
             UPDATE orders
-            SET status = 'Cancelled'
-            WHERE id = ? AND user_id = ?
-              AND COALESCE(status, 'Placed') != 'Cancelled'
-              AND LOWER(COALESCE(payment_status, 'Pending')) != 'paid'
-        """, (order_id, user_id))
+            SET cancellation_status = 'Rejected',
+                refund_status = CASE WHEN LOWER(COALESCE(payment_status, 'Pending')) = 'paid' THEN 'Not Applicable' ELSE refund_status END
+            WHERE id = ? AND LOWER(COALESCE(cancellation_status, 'None')) = 'requested'
+        """, (order_id,))
         changed = cursor.rowcount > 0
         connection.commit()
         return changed
     except sqlite3.Error:
+        connection.rollback()
+        return False
+    finally:
+        connection.close()
+
+
+def approve_unpaid_cancellation(order_id):
+    """Admin-only database operation for cancelling an unpaid requested order."""
+    connection = get_connection()
+    cursor = connection.cursor()
+    try:
+        timestamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        cursor.execute("""
+            UPDATE orders
+            SET status = 'Cancelled',
+                cancelled_date = COALESCE(cancelled_date, ?),
+                cancellation_status = 'Approved',
+                refund_status = 'Not Applicable',
+                refund_amount = 0,
+                refund_type = 'None',
+                cancellation_charge = 0
+            WHERE id = ?
+              AND LOWER(COALESCE(status, 'Placed')) != 'Cancelled'
+              AND LOWER(COALESCE(payment_status, 'Pending')) != 'paid'
+              AND LOWER(COALESCE(cancellation_status, 'None')) = 'requested'
+        """, (timestamp, order_id))
+        changed = cursor.rowcount > 0
+        connection.commit()
+        return changed
+    except sqlite3.Error:
+        connection.rollback(); return False
+    finally:
+        connection.close()
+
+
+def start_order_refund(user_id, order_id, refund_amount, refund_type, cancellation_reason, cancellation_charge):
+    """Record that a paid-order refund has been requested before calling Razorpay."""
+    connection = get_connection()
+    cursor = connection.cursor()
+    try:
+        timestamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        cursor.execute("""
+            SELECT user_id, final_price, status, payment_status, refund_status
+            FROM orders WHERE id = ?
+        """, (order_id,))
+        row = cursor.fetchone()
+        if not row or row[0] != user_id:
+            return False, "Order does not belong to the signed-in user."
+        final_price = float(row[1] or 0)
+        if str(row[2] or "Placed").lower() == "cancelled":
+            return False, "This order is already cancelled."
+        if str(row[3] or "Pending").lower() != "paid":
+            return False, "Only paid orders can be refunded."
+        if str(row[4] or "Not Applicable").lower() in {"pending", "processed"}:
+            return False, "A refund has already been requested for this order."
+        amount = round(float(refund_amount), 2)
+        if amount <= 0 or amount > final_price:
+            return False, "Refund amount must be greater than zero and cannot exceed the paid amount."
+        cursor.execute("""
+            UPDATE orders
+            SET refund_status = 'Pending', refund_amount = ?, refund_type = ?,
+                cancellation_reason = ?, cancellation_charge = ?,
+                cancellation_requested_date = ?
+            WHERE id = ? AND user_id = ?
+        """, (amount, refund_type, cancellation_reason, round(float(cancellation_charge),2), timestamp, order_id, user_id))
+        connection.commit()
+        return cursor.rowcount > 0, "Refund request recorded."
+    except (sqlite3.Error, ValueError, TypeError):
+        connection.rollback()
+        return False, "Could not record the refund request."
+    finally:
+        connection.close()
+
+
+def complete_order_refund(user_id, order_id, refund_amount, refund_status, razorpay_refund_id=None):
+    """Finalize cancellation/refund after Razorpay responds."""
+    connection = get_connection()
+    cursor = connection.cursor()
+    try:
+        timestamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        cursor.execute("SELECT user_id, final_price, refund_amount FROM orders WHERE id = ?", (order_id,))
+        row = cursor.fetchone()
+        if not row or row[0] != user_id:
+            return False
+        final_price = float(row[1] or 0)
+        amount = round(float(refund_amount), 2)
+        if amount <= 0 or amount > final_price:
+            return False
+        normalized = str(refund_status or "Pending").strip().title()
+        if normalized not in {"Pending", "Processed", "Failed"}:
+            return False
+        new_order_status = "Cancelled" if normalized in {"Pending", "Processed"} else "Placed"
+        refund_date = timestamp if normalized == "Processed" else None
+        cursor.execute("""
+            UPDATE orders
+            SET status = ?,
+                cancelled_date = CASE WHEN ? = 'Cancelled' THEN COALESCE(cancelled_date, ?) ELSE cancelled_date END,
+                refund_status = ?,
+                refund_amount = ?,
+                refund_date = CASE WHEN ? IS NOT NULL THEN COALESCE(refund_date, ?) ELSE refund_date END,
+                razorpay_refund_id = COALESCE(?, razorpay_refund_id),
+                cancellation_status = 'Approved'
+            WHERE id = ? AND user_id = ?
+        """, (new_order_status, new_order_status, timestamp, normalized, amount, refund_date, refund_date, razorpay_refund_id, order_id, user_id))
+        connection.commit()
+        return cursor.rowcount > 0
+    except (sqlite3.Error, ValueError, TypeError):
+        connection.rollback()
+        return False
+    finally:
+        connection.close()
+
+
+def fail_order_refund(user_id, order_id):
+    connection = get_connection(); cursor = connection.cursor()
+    try:
+        cursor.execute("UPDATE orders SET refund_status = 'Failed' WHERE id = ? AND user_id = ?", (order_id, user_id))
+        connection.commit(); return cursor.rowcount > 0
+    except sqlite3.Error:
+        connection.rollback(); return False
+    finally:
+        connection.close()
+
+
+def get_pending_refund_orders(user_id=None):
+    """Return paid QuadOS orders whose refund still needs Razorpay reconciliation."""
+    connection = get_connection()
+    cursor = connection.cursor()
+    try:
+        query = """
+            SELECT id, user_id, razorpay_payment_id, refund_amount,
+                   refund_status, razorpay_refund_id
+            FROM orders
+            WHERE LOWER(COALESCE(payment_status, 'Pending')) = 'paid'
+              AND LOWER(COALESCE(refund_status, 'Not Applicable')) IN ('pending', 'awaiting admin approval')
+              AND LOWER(COALESCE(cancellation_status, 'None')) = 'approved'
+        """
+        params = []
+        if user_id is not None:
+            query += " AND user_id = ?"
+            params.append(user_id)
+        query += " ORDER BY id DESC"
+        cursor.execute(query, params)
+        return cursor.fetchall()
+    finally:
+        connection.close()
+
+
+def sync_order_refund_status(user_id, order_id, refund_status, amount_refunded=0.0):
+    """Synchronize a QuadOS refund from the state reported by Razorpay.
+
+    Razorpay reports payment refund state using refund_status/amount_refunded.
+    QuadOS marks the refund Processed only when Razorpay confirms that the
+    requested refund amount has actually been refunded.
+    """
+    connection = get_connection()
+    cursor = connection.cursor()
+    try:
+        cursor.execute("""
+            SELECT user_id, refund_amount, refund_status
+            FROM orders
+            WHERE id = ?
+        """, (order_id,))
+        row = cursor.fetchone()
+        if not row or row[0] != user_id:
+            return False
+
+        requested_amount = round(float(row[1] or 0), 2)
+        refunded_amount = round(float(amount_refunded or 0), 2)
+        normalized = str(refund_status or '').strip().lower()
+
+        # A partial refund is also considered complete when Razorpay has
+        # refunded the exact amount QuadOS promised the customer.
+        is_processed = normalized == 'full' or (
+            normalized == 'partial' and refunded_amount + 0.01 >= requested_amount and requested_amount > 0
+        )
+
+        if is_processed:
+            timestamp = datetime.now(timezone.utc).isoformat(timespec='seconds')
+            cursor.execute("""
+                UPDATE orders
+                SET status = 'Cancelled',
+                    cancelled_date = COALESCE(cancelled_date, ?),
+                    refund_status = 'Processed',
+                    refund_date = COALESCE(refund_date, ?),
+                    refund_amount = CASE
+                        WHEN ? > 0 THEN ?
+                        ELSE refund_amount
+                    END,
+                    cancellation_status = 'Approved'
+                WHERE id = ? AND user_id = ?
+            """, (
+                timestamp, timestamp, refunded_amount, refunded_amount, order_id, user_id
+            ))
+        else:
+            # Do not mark a Razorpay refund as Failed merely because it is
+            # still pending. Razorpay may take time to finish a normal refund.
+            cursor.execute("""
+                UPDATE orders
+                SET status = 'Cancelled',
+                    cancelled_date = COALESCE(cancelled_date, ?),
+                    refund_status = 'Pending',
+                    cancellation_status = 'Approved'
+                WHERE id = ? AND user_id = ?
+            """, (datetime.now(timezone.utc).isoformat(timespec='seconds'), order_id, user_id))
+
+        connection.commit()
+        return cursor.rowcount > 0
+    except (sqlite3.Error, ValueError, TypeError):
         connection.rollback()
         return False
     finally:
@@ -1134,7 +1443,12 @@ def get_all_orders_with_users():
             orders.subtotal,
             orders.final_price,
             orders.order_date,
-            orders.status
+            orders.status,
+            orders.payment_status,
+            orders.refund_status,
+            orders.refund_amount,
+            orders.cancellation_charge,
+            orders.cancellation_status
         FROM orders
         JOIN users
         ON orders.user_id = users.id
