@@ -48,9 +48,7 @@ from database import (
     get_order_by_razorpay_order_id,
     start_order_refund,
     complete_order_refund,
-    fail_order_refund,
-    get_pending_refund_orders,
-    sync_order_refund_status
+    fail_order_refund
 )
 
 from config import (
@@ -178,50 +176,6 @@ ORDER_STATUS_OPTIONS = [
     "Completed",
     "Cancelled",
 ]
-
-
-def _reconcile_pending_refunds(user_id=None):
-    """Reconcile QuadOS Pending refunds with the current Razorpay payment state.
-
-    This is intentionally server-side and uses the same Razorpay credentials
-    as the refund creation call. It prevents QuadOS from staying Pending after
-    Razorpay has already completed the refund.
-    """
-    key_id, key_secret = get_razorpay_credentials()
-    if not key_id or not key_secret:
-        return 0
-
-    pending_orders = get_pending_refund_orders(user_id)
-    reconciled = 0
-
-    for order_id, owner_id, payment_id, requested_amount, local_status, refund_id in pending_orders:
-        payment_id = str(payment_id or '').strip()
-        if not payment_id:
-            continue
-
-        try:
-            payment = fetch_payment(key_id, key_secret, payment_id)
-            if not isinstance(payment, dict):
-                continue
-
-            razorpay_refund_status = str(payment.get('refund_status') or '').strip().lower()
-            amount_refunded = round(float(payment.get('amount_refunded', 0) or 0) / 100.0, 2)
-
-            # Razorpay payment.status becomes 'refunded' for a fully refunded
-            # payment. refund_status='full' is the explicit refund indicator.
-            if str(payment.get('status', '')).strip().lower() == 'refunded':
-                razorpay_refund_status = 'full'
-
-            if sync_order_refund_status(
-                owner_id, order_id, razorpay_refund_status, amount_refunded
-            ):
-                reconciled += 1
-        except Exception:
-            # A temporary API/network problem must not corrupt the local
-            # refund state. The order remains Pending and can be checked again.
-            continue
-
-    return reconciled
 
 
 def _execute_order_cancellation_refund(order_id, target_user_id, refund_amount, refund_type, reason,
@@ -2992,11 +2946,6 @@ elif page == "All Users":
 
 elif page == "Manage Orders":
 
-    # Reconcile any previously Pending refunds with Razorpay before showing
-    # the admin table. This fixes stale local statuses such as Pending when
-    # Razorpay already reports the payment as Refunded.
-    _reconcile_pending_refunds()
-
     st.title("Manage Orders")
 
     st.caption(
@@ -3520,11 +3469,63 @@ elif page == "Analytics":
             analytics_style(ax,"All Orders Over Time","Orders");ax.xaxis.set_major_locator(mdates.AutoDateLocator());ax.xaxis.set_major_formatter(mdates.DateFormatter("%d %b"));ax.tick_params(axis="x",rotation=30);ax.grid(axis="x",visible=False);finish_chart(fig)
         with c2:
             revenue_data=data.loc[paid_active & data["payment_date"].notna()].copy()
-            if revenue_data.empty: st.info("No paid revenue dates available yet.")
+            if revenue_data.empty:
+                st.info("No paid revenue dates available yet.")
             else:
-                trend=revenue_data.groupby(revenue_data["payment_date"].dt.normalize())["final_price"].sum().sort_index()
-                fig,ax=plt.subplots(figsize=(7,4));ax.plot(trend.index,trend.values,marker="o",markersize=5,linewidth=2.5,color=ORANGE);ax.fill_between(trend.index,trend.values,alpha=.12,color=ORANGE)
-                analytics_style(ax,"Paid Revenue Over Time","Revenue");ax.xaxis.set_major_locator(mdates.AutoDateLocator());ax.xaxis.set_major_formatter(mdates.DateFormatter("%d %b"));ax.tick_params(axis="x",rotation=30);ax.grid(axis="x",visible=False);ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x,pos:rupee_short(x)));finish_chart(fig)
+                # Use the real payment dates only.  Matplotlib can otherwise
+                # expand the X-axis by several months when there are only one
+                # or two revenue points, which makes the chart look incorrect.
+                revenue_data["payment_date"] = pd.to_datetime(
+                    revenue_data["payment_date"], errors="coerce", utc=True
+                )
+                revenue_data = revenue_data.dropna(subset=["payment_date"])
+                revenue_data["final_price"] = pd.to_numeric(
+                    revenue_data["final_price"], errors="coerce"
+                ).fillna(0)
+
+                trend = (
+                    revenue_data
+                    .groupby(revenue_data["payment_date"].dt.normalize())["final_price"]
+                    .sum()
+                    .sort_index()
+                )
+
+                if trend.empty:
+                    st.info("No valid paid revenue dates available yet.")
+                else:
+                    fig,ax=plt.subplots(figsize=(7,4))
+                    ax.plot(
+                        trend.index, trend.values, marker="o", markersize=5,
+                        linewidth=2.5, color=ORANGE
+                    )
+                    ax.fill_between(
+                        trend.index, trend.values, alpha=.12, color=ORANGE
+                    )
+
+                    analytics_style(ax,"Paid Revenue Over Time","Revenue")
+
+                    # Keep the X-axis focused on the actual payment-date range.
+                    # This prevents labels such as Jan/Jul from appearing when
+                    # there is only one payment date.
+                    start_date = trend.index.min()
+                    end_date = trend.index.max()
+                    if start_date == end_date:
+                        padding = pd.Timedelta(days=1)
+                    else:
+                        padding = max(
+                            pd.Timedelta(days=1),
+                            (end_date - start_date) * 0.05
+                        )
+                    ax.set_xlim(start_date - padding, end_date + padding)
+
+                    ax.xaxis.set_major_locator(mdates.AutoDateLocator(minticks=2, maxticks=8))
+                    ax.xaxis.set_major_formatter(mdates.DateFormatter("%d %b"))
+                    ax.tick_params(axis="x",rotation=30)
+                    ax.grid(axis="x",visible=False)
+                    ax.yaxis.set_major_formatter(
+                        plt.FuncFormatter(lambda x,pos:rupee_short(x))
+                    )
+                    finish_chart(fig)
 
         st.divider()
 
@@ -3541,17 +3542,47 @@ elif page == "Analytics":
         for label,mask,date_col in [("Cancelled",cancelled,"cancelled_date"),("Payment Pending",pending,"order_date"),("Payment Failed",failed,"order_date")]:
             subset=data.loc[mask].copy()
             subset["event_date"]=pd.to_datetime(subset[date_col],errors="coerce")
+            subset=subset.dropna(subset=["event_date"])
             if not subset.empty:
-                counts=subset.dropna(subset=["event_date"]).groupby(subset["event_date"].dt.normalize()).size()
-                for dt,val in counts.items(): exception_frames.append({"date":dt,"type":label,"count":int(val)})
+                counts=subset.groupby(subset["event_date"].dt.normalize()).size()
+                for dt,val in counts.items():
+                    exception_frames.append({"date":dt,"type":label,"count":int(val)})
+
         if exception_frames:
             ex=pd.DataFrame(exception_frames)
+            ex["date"]=pd.to_datetime(ex["date"],errors="coerce").dt.normalize()
+
+            # Use one common daily timeline for all three series.
+            # Missing dates are real zero-event days, so they must be shown as 0
+            # instead of being skipped or connected as if an event occurred.
+            all_dates=pd.date_range(ex["date"].min(),ex["date"].max(),freq="D")
+            chart_data=(
+                ex.pivot_table(index="date",columns="type",values="count",aggfunc="sum",fill_value=0)
+                .reindex(all_dates,fill_value=0)
+                .fillna(0)
+                .sort_index()
+            )
+
             fig,ax=plt.subplots(figsize=(14,4.5))
             for label,color in [("Cancelled",RED),("Payment Pending",PURPLE),("Payment Failed",ORANGE)]:
-                part=ex[ex["type"]==label].sort_values("date")
-                if not part.empty: ax.plot(part["date"],part["count"],marker="o",linewidth=2,label=label,color=color)
+                if label in chart_data.columns:
+                    ax.plot(
+                        chart_data.index,
+                        chart_data[label].astype(int),
+                        marker="o",
+                        markersize=4,
+                        linewidth=2,
+                        label=label,
+                        color=color
+                    )
+
             analytics_style(ax,"Cancelled, Pending and Failed Orders Over Time","Orders")
-            ax.xaxis.set_major_locator(mdates.AutoDateLocator());ax.xaxis.set_major_formatter(mdates.DateFormatter("%d %b"));ax.tick_params(axis="x",rotation=30);ax.grid(axis="x",visible=False);ax.legend(frameon=False,fontsize=9)
+            ax.xaxis.set_major_locator(mdates.AutoDateLocator())
+            ax.xaxis.set_major_formatter(mdates.DateFormatter("%d %b"))
+            ax.tick_params(axis="x",rotation=30)
+            ax.grid(axis="x",visible=False)
+            ax.set_ylim(bottom=0)
+            ax.legend(frameon=False,fontsize=9)
             finish_chart(fig)
         else:
             st.info("No cancelled, pending or failed order events to display.")
@@ -5104,9 +5135,6 @@ elif page == "Mobile Configurator":
 # ============================================================
 
 elif page == "My Orders":
-
-    # Keep the customer's refund status synchronized with Razorpay.
-    _reconcile_pending_refunds(user_id)
 
     st.title("My Orders")
     st.write("View your orders, payment status, cancellations and refunds.")
